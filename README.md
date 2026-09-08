@@ -16,13 +16,19 @@ with the resulting `postgresql.conf` baked in.
   PGTune's own categories) and a hardware tier (small / medium / large
   presets — not a precise sizing calculator; there's no data-volume/
   throughput input to justify more precision than that yet). Together
-  these compute a recommended value for each of 15 tunable parameters,
-  grouped into Memory / Connections / Query / WAL / Logging / Autovacuum.
+  these compute a recommended value for each of 17 tunable parameters,
+  grouped into Memory / Connections / Query / WAL / Durability / Logging /
+  Autovacuum — a set cross-checked against several independent PostgreSQL
+  tuning guides (PGTune, the PostgreSQL Wiki, Percona, Mydbops) rather
+  than picked arbitrarily.
 - Each parameter is shown against PostgreSQL's real stock default (not a
   live "current" value — pg4all doesn't connect to a running database),
   with an advisory impact score, risk level, and whether changing it
   needs a restart (cross-checked against real parameter contexts, not
-  just editorial). Override any of them with its slider before building.
+  just editorial). Override any of them (most are sliders; `synchronous_commit`
+  is an on/off choice) before building. `synchronous_commit` is never
+  recommended `off` by default — trading away commit durability is left
+  as a deliberate, informed choice for the operator.
 - Build the resulting Docker image on demand, with your final values.
 
 Nothing here is persisted — no database, no accounts. It's a stateless

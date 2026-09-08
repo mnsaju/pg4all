@@ -23,4 +23,6 @@ DEFAULTS: dict[str, str] = {
     "log_min_duration_statement": "-1",
     "autovacuum_max_workers": "3",
     "autovacuum_vacuum_scale_factor": "0.2",
+    "checkpoint_timeout": "5min",
+    "synchronous_commit": "on",
 }

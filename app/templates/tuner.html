@@ -75,9 +75,31 @@
         <span class="param-arrow">{{ row.comparison }}</span>
         <span class="param-target" id="target-{{ row.spec.key }}">{{ row.recommended_display }}</span>
       </div>
+      {% if row.spec.kind == 'enum' %}
+      <div class="choice-group">
+        {% for choice in row.spec.choices %}
+        <label class="choice-pill">
+          <input
+            type="radio"
+            class="tuner-control"
+            name="p_{{ row.spec.key }}"
+            value="{{ choice }}"
+            {% if choice == row.recommended_value %}checked{% endif %}
+            data-key="{{ row.spec.key }}"
+            data-default="{{ row.default_value }}"
+            data-impact="{{ row.spec.impact }}"
+            data-restart="{{ '1' if row.spec.restart_required else '0' }}"
+            data-unit=""
+            data-decimals="0"
+          >
+          {{ choice.capitalize() }}
+        </label>
+        {% endfor %}
+      </div>
+      {% else %}
       <input
         type="range"
-        class="tuner-slider"
+        class="tuner-control tuner-slider"
         name="p_{{ row.spec.key }}"
         id="slider-{{ row.spec.key }}"
         min="{{ row.spec.min_value }}"
@@ -95,6 +117,7 @@
         <span>{{ row.spec.min_value }} {{ row.spec.unit }}</span>
         <span>{{ row.spec.max_value }} {{ row.spec.unit }}</span>
       </div>
+      {% endif %}
     </div>
   </div>
   {% endfor %}

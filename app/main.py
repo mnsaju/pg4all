@@ -91,11 +91,14 @@ async def build(request: Request):
     settings = {}
     for spec in parameters.PARAMETER_SPECS:
         raw = form.get(f"p_{spec.key}")
-        try:
-            number = float(raw) if raw is not None else recommended_by_key[spec.key]
-        except ValueError:
-            number = recommended_by_key[spec.key]
-        settings[spec.key] = parameters.format_conf_value(spec, number)
+        if spec.kind == "enum":
+            value = raw if raw in (spec.choices or ()) else recommended_by_key[spec.key]
+        else:
+            try:
+                value = float(raw) if raw is not None else recommended_by_key[spec.key]
+            except ValueError:
+                value = recommended_by_key[spec.key]
+        settings[spec.key] = parameters.format_conf_value(spec, value)
 
     conf_text = render_conf(settings)
     context_dir = create_build_context(version.major, conf_text)

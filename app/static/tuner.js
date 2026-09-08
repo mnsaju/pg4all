@@ -2,60 +2,92 @@
   var form = document.getElementById("tuner-form");
   if (!form) return;
 
-  var sliders = Array.prototype.slice.call(form.querySelectorAll(".tuner-slider"));
+  var controls = Array.prototype.slice.call(form.querySelectorAll(".tuner-control"));
 
-  function formatValue(slider) {
-    var decimals = parseInt(slider.dataset.decimals || "0", 10);
-    var value = parseFloat(slider.value);
+  // Group controls by data-key: a range slider is a group of one; an
+  // enum (radio) parameter is a group of choices, only one checked.
+  var groups = {};
+  controls.forEach(function (el) {
+    var key = el.dataset.key;
+    (groups[key] = groups[key] || []).push(el);
+  });
+
+  function isRadioGroup(els) {
+    return els[0].type === "radio";
+  }
+
+  function currentValue(els) {
+    if (isRadioGroup(els)) {
+      var checked = els.filter(function (el) { return el.checked; })[0];
+      return checked ? checked.value : els[0].dataset.default;
+    }
+    return els[0].value;
+  }
+
+  function formatValue(el, rawValue) {
+    var decimals = parseInt(el.dataset.decimals || "0", 10);
+    var unit = el.dataset.unit || "";
+    if (el.type === "radio") {
+      return rawValue.charAt(0).toUpperCase() + rawValue.slice(1);
+    }
+    var value = parseFloat(rawValue);
     var text = decimals > 0 ? value.toFixed(decimals) : String(Math.round(value));
-    var unit = slider.dataset.unit || "";
     return unit ? text + " " + unit : text;
   }
 
-  function updateTarget(slider) {
-    var target = document.getElementById("target-" + slider.dataset.key);
-    if (target) target.textContent = formatValue(slider);
+  function updateTarget(key) {
+    var els = groups[key];
+    var target = document.getElementById("target-" + key);
+    if (target) target.textContent = formatValue(els[0], currentValue(els));
+  }
+
+  function isTuned(key) {
+    var els = groups[key];
+    var value = currentValue(els);
+    var def = els[0].dataset.default;
+    if (isRadioGroup(els)) return String(value) !== String(def);
+    return Math.abs(parseFloat(value) - parseFloat(def)) > 1e-9;
   }
 
   function recomputeStats() {
-    var tuned = sliders.filter(function (slider) {
-      var value = parseFloat(slider.value);
-      var def = parseFloat(slider.dataset.default);
-      return Math.abs(value - def) > 1e-9;
-    });
+    var keys = Object.keys(groups);
+    var tunedKeys = keys.filter(isTuned);
 
     var tunedCountEl = document.getElementById("stat-tuned-count");
-    if (tunedCountEl) tunedCountEl.textContent = tuned.length + " / " + sliders.length;
+    if (tunedCountEl) tunedCountEl.textContent = tunedKeys.length + " / " + keys.length;
 
     var avgImpactEl = document.getElementById("stat-avg-impact");
     if (avgImpactEl) {
       var avg = 0;
-      if (tuned.length) {
-        var sum = tuned.reduce(function (acc, s) {
-          return acc + parseFloat(s.dataset.impact);
+      if (tunedKeys.length) {
+        var sum = tunedKeys.reduce(function (acc, key) {
+          return acc + parseFloat(groups[key][0].dataset.impact);
         }, 0);
-        avg = Math.round(sum / tuned.length);
+        avg = Math.round(sum / tunedKeys.length);
       }
       avgImpactEl.textContent = avg + " / 100";
     }
 
     var restartEl = document.getElementById("stat-restart");
     if (restartEl) {
-      var anyRestart = tuned.some(function (s) { return s.dataset.restart === "1"; });
+      var anyRestart = tunedKeys.some(function (key) {
+        return groups[key][0].dataset.restart === "1";
+      });
       restartEl.textContent = anyRestart ? "Yes" : "No";
     }
   }
 
-  sliders.forEach(function (slider) {
-    slider.addEventListener("input", function () {
-      updateTarget(slider);
+  controls.forEach(function (el) {
+    var eventName = el.type === "radio" ? "change" : "input";
+    el.addEventListener(eventName, function () {
+      updateTarget(el.dataset.key);
       recomputeStats();
     });
   });
 
   form.addEventListener("reset", function () {
     setTimeout(function () {
-      sliders.forEach(updateTarget);
+      Object.keys(groups).forEach(updateTarget);
       recomputeStats();
     }, 0);
   });

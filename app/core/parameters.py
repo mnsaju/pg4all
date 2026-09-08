@@ -18,13 +18,16 @@ from app.core.conf_generator import generate_conf
 from app.core.hardware import HardwareTier
 from app.core.workloads import Workload
 
-CATEGORY_ORDER = ["memory", "connections", "query", "wal", "logging", "autovacuum"]
+CATEGORY_ORDER = [
+    "memory", "connections", "query", "wal", "durability", "logging", "autovacuum",
+]
 
 CATEGORY_LABELS = {
     "memory": "Memory",
     "connections": "Connections",
     "query": "Query",
     "wal": "WAL",
+    "durability": "Durability",
     "logging": "Logging",
     "autovacuum": "Autovacuum",
 }
@@ -41,9 +44,10 @@ class ParameterSpec:
     min_value: float
     max_value: float
     step: float
-    kind: str  # "memory_mb" | "int" | "float"
+    kind: str  # "memory_mb" | "int" | "float" | "minutes" | "enum"
     unit: str = ""
     decimals: int = 2
+    choices: tuple[str, ...] | None = None  # only for kind == "enum"
 
 
 PARAMETER_SPECS: list[ParameterSpec] = [
@@ -132,6 +136,21 @@ PARAMETER_SPECS: list[ParameterSpec] = [
         min_value=256, max_value=16384, step=256, kind="memory_mb", unit="MB",
     ),
     ParameterSpec(
+        "checkpoint_timeout", "wal",
+        "Time between automatic WAL checkpoints. Longer intervals reduce "
+        "checkpoint I/O at the cost of a longer crash-recovery replay.",
+        impact=64, risk="low", restart_required=False,
+        min_value=5, max_value=60, step=5, kind="minutes", unit="min",
+    ),
+    ParameterSpec(
+        "synchronous_commit", "durability",
+        "Whether a commit waits for its WAL record to reach disk before "
+        "reporting success. 'Off' can raise write throughput at the risk "
+        "of losing the most recent moment of transactions on a crash.",
+        impact=75, risk="high", restart_required=False,
+        min_value=0, max_value=1, step=1, kind="enum", choices=("on", "off"),
+    ),
+    ParameterSpec(
         "log_min_duration_statement", "logging",
         "Log statements running longer than this many milliseconds. "
         "-1 disables, 0 logs every statement.",
@@ -172,36 +191,54 @@ def _parse_size_to_mb(raw: str) -> float:
     return float(raw)
 
 
-def parse_value(spec: ParameterSpec, raw: str) -> float:
-    if spec.kind == "memory_mb":
-        return _parse_size_to_mb(raw)
+def _parse_minutes(raw: str) -> float:
+    raw = raw.strip()
+    for suffix, factor in (("min", 1.0), ("h", 60.0), ("s", 1.0 / 60.0)):
+        if raw.lower().endswith(suffix):
+            return float(raw[: -len(suffix)]) * factor
     return float(raw)
 
 
-def format_display(spec: ParameterSpec, number: float) -> str:
+def parse_value(spec: ParameterSpec, raw: str) -> float | str:
+    if spec.kind == "enum":
+        return raw.strip()
+    if spec.kind == "memory_mb":
+        return _parse_size_to_mb(raw)
+    if spec.kind == "minutes":
+        return _parse_minutes(raw)
+    return float(raw)
+
+
+def format_display(spec: ParameterSpec, value: float | str) -> str:
+    if spec.kind == "enum":
+        return str(value).capitalize()
     if spec.kind == "float":
-        number_text = f"{number:.{spec.decimals}f}"
+        number_text = f"{value:.{spec.decimals}f}"
     else:
-        number_text = str(int(round(number)))
+        number_text = str(int(round(value)))
     return f"{number_text} {spec.unit}".strip()
 
 
-def format_conf_value(spec: ParameterSpec, number: float) -> str:
+def format_conf_value(spec: ParameterSpec, value: float | str) -> str:
+    if spec.kind == "enum":
+        return str(value)
     if spec.kind == "memory_mb":
-        return f"{int(round(number))}MB"
+        return f"{int(round(value))}MB"
+    if spec.kind == "minutes":
+        return f"{int(round(value))}min"
     if spec.kind == "float":
-        return f"{number:.{spec.decimals}f}"
-    return str(int(round(number)))
+        return f"{value:.{spec.decimals}f}"
+    return str(int(round(value)))
 
 
 @dataclass(frozen=True)
 class ParameterRow:
     spec: ParameterSpec
-    default_value: float
-    recommended_value: float
+    default_value: float | str
+    recommended_value: float | str
     default_display: str
     recommended_display: str
-    comparison: str  # "=" | "→" (higher) | "←" (lower)
+    comparison: str  # "=" | "→" (higher/changed) | "←" (lower)
 
 
 @dataclass(frozen=True)
@@ -221,6 +258,8 @@ def build_tuner_groups(workload: Workload, tier: HardwareTier) -> list[CategoryG
 
         if recommended_value == default_value:
             comparison = "="
+        elif spec.kind == "enum":
+            comparison = "→"  # non-orderable change, no direction to show
         elif recommended_value > default_value:
             comparison = "→"
         else:

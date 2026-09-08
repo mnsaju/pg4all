@@ -57,6 +57,14 @@ _VACUUM_SCALE_FACTOR_BY_WORKLOAD = {
     "desktop": 0.2,
 }
 
+_CHECKPOINT_TIMEOUT_MIN_BY_WORKLOAD = {
+    "web": 15,
+    "oltp": 15,
+    "dw": 20,
+    "mixed": 15,
+    "desktop": 5,
+}
+
 
 def generate_conf(workload: Workload, hardware: HardwareTier) -> dict[str, str]:
     total_mem_kb = hardware.ram_gb * 1024 * 1024
@@ -101,6 +109,13 @@ def generate_conf(workload: Workload, hardware: HardwareTier) -> dict[str, str]:
         "autovacuum_vacuum_scale_factor": str(
             _VACUUM_SCALE_FACTOR_BY_WORKLOAD.get(workload.key, 0.1)
         ),
+        "checkpoint_timeout": (
+            f"{_CHECKPOINT_TIMEOUT_MIN_BY_WORKLOAD.get(workload.key, 15)}min"
+        ),
+        # Never recommended off by default: trading away commit durability
+        # is a deliberate, informed choice for the operator to make via its
+        # own control, not something a tuning tool should default to.
+        "synchronous_commit": "on",
     }
     return settings
 
