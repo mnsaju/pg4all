@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+{% if result.ok %}
+<h2 class="ok">Build succeeded: {{ result.tag }}</h2>
+{% else %}
+<h2 class="error">Build failed: {{ result.tag }}</h2>
+{% endif %}
+
+<pre class="log">{% for line in result.log %}{{ line }}
+{% endfor %}</pre>
+
+<p><a href="/">&larr; start over</a></p>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>PostgreSQL {{ pg_version }} — {{ workload.label }}</h2>
+
+<form action="/build" method="post">
+  <input type="hidden" name="pg_version" value="{{ pg_version }}">
+  <input type="hidden" name="workload_key" value="{{ workload.key }}">
+
+  <fieldset>
+    <legend>3. Hardware tier (recommended: {{ tier.label }} — override if needed)</legend>
+    {% for t in tiers %}
+    <label>
+      <input type="radio" name="hardware_tier" value="{{ t.key }}" {% if t.key == tier.key %}checked{% endif %}>
+      {{ t.label }}
+    </label>
+    {% endfor %}
+  </fieldset>
+
+  <fieldset>
+    <legend>Generated postgresql.conf (for {{ tier.label }})</legend>
+    <p class="hint">Preview shown is for the recommended tier above. If you pick a different tier before building, the conf actually baked into the image is regenerated for that tier.</p>
+    <pre>{{ conf_text }}</pre>
+  </fieldset>
+
+  <button type="submit">Build Docker image</button>
+</form>
+<p><a href="/">&larr; back</a></p>
+{% endblock %}
