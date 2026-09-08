@@ -53,8 +53,17 @@ daemon (`DOCKER_HOST`, or the default local socket).
 ## Run as a container, building on the host daemon
 
 ```bash
+./scripts/run.sh
+```
+
+Builds the console image and runs it with the host's Docker socket
+mounted in, on port 8000 (override with `PG4ALL_PORT`). Re-running it
+replaces the previous container — the console is stateless, so nothing
+is lost. Equivalent to:
+
+```bash
 docker build -f docker/console.Dockerfile -t pg4all-console .
-docker run -p 8000:8000 -v /var/run/docker.sock:/var/run/docker.sock pg4all-console
+docker run -d --name pg4all-console -p 8000:8000 -v /var/run/docker.sock:/var/run/docker.sock pg4all-console
 ```
 
 ## Tests
