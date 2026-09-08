@@ -49,7 +49,7 @@ def generate(
         request,
         "workload.html",
         {
-            "pg_version": pg_version,
+            "pg_version": pg_versions.get(pg_version),
             "workload": workload,
             "tier": tier,
             "tiers": hardware.TIERS,
@@ -78,5 +78,5 @@ def build(
     return templates.TemplateResponse(
         request,
         "result.html",
-        {"result": result},
+        {"result": result, "pg_version": pg_versions.get(pg_version)},
     )

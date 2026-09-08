@@ -1,28 +1,45 @@
 {% extends "base.html" %}
+{% block page_title %}Build Image{% endblock %}
+{% block page_subtitle %}Confirm hardware, review the generated conf, then build.{% endblock %}
 {% block content %}
-<h2>PostgreSQL {{ pg_version }} — {{ workload.label }}</h2>
+<p class="field-hint" style="margin-top:-0.5rem">
+  PostgreSQL {{ pg_version.full_version }} &middot; {{ workload.label }}
+</p>
 
 <form action="/build" method="post">
-  <input type="hidden" name="pg_version" value="{{ pg_version }}">
+  <input type="hidden" name="pg_version" value="{{ pg_version.major }}">
   <input type="hidden" name="workload_key" value="{{ workload.key }}">
 
-  <fieldset>
-    <legend>3. Hardware tier (recommended: {{ tier.label }} — override if needed)</legend>
-    {% for t in tiers %}
-    <label>
-      <input type="radio" name="hardware_tier" value="{{ t.key }}" {% if t.key == tier.key %}checked{% endif %}>
-      {{ t.label }}
-    </label>
-    {% endfor %}
-  </fieldset>
+  <div class="field-group">
+    <span class="field-label">3. Hardware tier</span>
+    <p class="field-hint">Recommended for this workload: {{ tier.label }} — override if you know better.</p>
+    <div class="option-grid cols-3">
+      {% for t in tiers %}
+      <label class="option">
+        <input type="radio" name="hardware_tier" value="{{ t.key }}" {% if t.key == tier.key %}checked{% endif %}>
+        <span class="option-title">{{ t.label.split(' (')[0] }}</span>
+        <span class="option-meta">{{ t.vcpu }} vCPU &middot; {{ t.ram_gb }} GB</span>
+      </label>
+      {% endfor %}
+    </div>
+  </div>
 
-  <fieldset>
-    <legend>Generated postgresql.conf (for {{ tier.label }})</legend>
-    <p class="hint">Preview shown is for the recommended tier above. If you pick a different tier before building, the conf actually baked into the image is regenerated for that tier.</p>
-    <pre>{{ conf_text }}</pre>
-  </fieldset>
+  <div class="field-group">
+    <span class="field-label">Generated postgresql.conf</span>
+    <p class="field-hint">Shown for {{ tier.label }}. Picking a different tier above regenerates this for the build.</p>
+    <div class="conf-panel">
+      {% for line in conf_text.split('\n') %}
+      {% if not line %}{# skip blank line #}
+      {% elif line.startswith('#') %}<span class="conf-line conf-comment">{{ line }}</span>
+      {% elif ' = ' in line %}
+        {% set key, value = line.split(' = ', 1) %}<span class="conf-line"><span class="conf-key">{{ key }}</span><span class="conf-eq"> = </span><span class="conf-value">{{ value }}</span></span>
+      {% else %}<span class="conf-line">{{ line }}</span>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
 
-  <button type="submit">Build Docker image</button>
+  <button type="submit" class="btn btn-primary">Build Docker image</button>
 </form>
-<p><a href="/">&larr; back</a></p>
+<a href="/" class="btn-link">&larr; back</a>
 {% endblock %}

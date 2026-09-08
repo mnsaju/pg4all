@@ -2,16 +2,35 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}pg4all{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
-    <h1>pg4all</h1>
-    <p class="tagline">Pick a PostgreSQL version and workload, get a tuned image.</p>
-  </header>
-  <main>
-    {% block content %}{% endblock %}
-  </main>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">pg4all</span>
+        <span class="brand-tag">console</span>
+      </div>
+      <nav class="nav">
+        <a class="nav-item is-active" href="/">Build Image</a>
+        <span class="nav-item is-disabled">Image Registry<em class="soon">soon</em></span>
+        <span class="nav-item is-disabled">Cluster Templates<em class="soon">soon</em></span>
+        <span class="nav-item is-disabled">Settings<em class="soon">soon</em></span>
+      </nav>
+      <div class="sidebar-footer">v1 &middot; self-hosted</div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <h1>{% block page_title %}Build Image{% endblock %}</h1>
+        <p class="subtitle">{% block page_subtitle %}Pick a PostgreSQL version and workload, get a tuned image.{% endblock %}</p>
+      </header>
+      <main class="content">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
 </body>
 </html>

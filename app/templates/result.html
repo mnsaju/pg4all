@@ -1,13 +1,19 @@
 {% extends "base.html" %}
+{% block page_title %}Build Image{% endblock %}
+{% block page_subtitle %}Build result{% endblock %}
 {% block content %}
 {% if result.ok %}
-<h2 class="ok">Build succeeded: {{ result.tag }}</h2>
+<div class="status-banner ok">Build succeeded</div>
 {% else %}
-<h2 class="error">Build failed: {{ result.tag }}</h2>
+<div class="status-banner error">Build failed</div>
 {% endif %}
 
-<pre class="log">{% for line in result.log %}{{ line }}
-{% endfor %}</pre>
+<p class="field-hint" style="margin-top:-0.5rem">
+  PostgreSQL {{ pg_version.full_version }} &middot; image tag <code>{{ result.tag }}</code>
+</p>
 
-<p><a href="/">&larr; start over</a></p>
+<div class="log-panel">{% for line in result.log %}{{ line }}
+{% endfor %}</div>
+
+<a href="/" class="btn-link">&larr; start over</a>
 {% endblock %}
