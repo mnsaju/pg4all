@@ -1,0 +1,12 @@
+services:
+  console:
+    build:
+      context: .
+      dockerfile: docker/console.Dockerfile
+    image: pg4all-console
+    container_name: pg4all-console
+    ports:
+      - "${PG4ALL_PORT:-8000}:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
