@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block page_title %}Build Image{% endblock %}
+{% block page_title %}Config Tuner{% endblock %}
 {% block page_subtitle %}Build result{% endblock %}
 {% block content %}
 {% if result.ok %}
@@ -8,12 +8,12 @@
 <div class="status-banner error">Build failed</div>
 {% endif %}
 
-<p class="field-hint" style="margin-top:-0.5rem">
+<p class="field-hint">
   PostgreSQL {{ pg_version.full_version }} &middot; image tag <code>{{ result.tag }}</code>
 </p>
 
 <div class="log-panel">{% for line in result.log %}{{ line }}
 {% endfor %}</div>
 
-<a href="/" class="btn-link">&larr; start over</a>
+<a href="/" class="btn-link">&larr; back to Config Tuner</a>
 {% endblock %}

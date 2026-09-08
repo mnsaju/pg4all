@@ -1,14 +1,14 @@
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.builder.dockerfile_gen import create_build_context
 from app.builder.docker_build import build_image
-from app.core import hardware, pg_versions, workloads
-from app.core.conf_generator import generate_conf, render_conf
+from app.core import hardware, parameters, pg_versions, workloads
+from app.core.conf_generator import render_conf
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -17,66 +17,93 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
+def _resolve_selection(pg_version: str | None, workload_key: str | None, tier_key: str | None):
+    try:
+        version = pg_versions.get(pg_version) if pg_version else pg_versions.list_versions()[0]
+    except ValueError:
+        version = pg_versions.list_versions()[0]
+
+    try:
+        workload = workloads.get(workload_key) if workload_key else workloads.get("mixed")
+    except ValueError:
+        workload = workloads.get("mixed")
+
+    try:
+        tier = hardware.get(tier_key) if tier_key else hardware.recommend_for_workload(workload.key)
+    except ValueError:
+        tier = hardware.recommend_for_workload(workload.key)
+
+    return version, workload, tier
+
+
+def _tuner_stats(groups: list[parameters.CategoryGroup]) -> dict:
+    all_rows = [row for group in groups for row in group.rows]
+    tuned_rows = [row for row in all_rows if row.recommended_value != row.default_value]
+
+    avg_impact = (
+        round(sum(row.spec.impact for row in tuned_rows) / len(tuned_rows))
+        if tuned_rows
+        else 0
+    )
+    restart_required = any(row.spec.restart_required for row in tuned_rows)
+
+    return {
+        "tuned_count": len(tuned_rows),
+        "total_count": len(all_rows),
+        "avg_impact": avg_impact,
+        "restart_required": restart_required,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request):
+def index(request: Request, pg_version: str | None = None, workload: str | None = None, tier: str | None = None):
+    version, wl, hw_tier = _resolve_selection(pg_version, workload, tier)
+    groups = parameters.build_tuner_groups(wl, hw_tier)
+
     return templates.TemplateResponse(
         request,
-        "index.html",
+        "tuner.html",
         {
             "pg_versions": pg_versions.list_versions(),
             "workloads": workloads.WORKLOADS,
-        },
-    )
-
-
-@app.post("/generate", response_class=HTMLResponse)
-def generate(
-    request: Request,
-    pg_version: str = Form(...),
-    workload_key: str = Form(...),
-    hardware_tier: str | None = Form(None),
-):
-    workload = workloads.get(workload_key)
-    tier = (
-        hardware.get(hardware_tier)
-        if hardware_tier
-        else hardware.recommend_for_workload(workload_key)
-    )
-    settings = generate_conf(workload, tier)
-    conf_text = render_conf(settings)
-
-    return templates.TemplateResponse(
-        request,
-        "workload.html",
-        {
-            "pg_version": pg_versions.get(pg_version),
-            "workload": workload,
-            "tier": tier,
             "tiers": hardware.TIERS,
-            "settings": settings,
-            "conf_text": conf_text,
+            "selected_version": version,
+            "selected_workload": wl,
+            "selected_tier": hw_tier,
+            "groups": groups,
+            "stats": _tuner_stats(groups),
         },
     )
 
 
 @app.post("/build", response_class=HTMLResponse)
-def build(
-    request: Request,
-    pg_version: str = Form(...),
-    workload_key: str = Form(...),
-    hardware_tier: str = Form(...),
-):
-    workload = workloads.get(workload_key)
-    tier = hardware.get(hardware_tier)
-    settings = generate_conf(workload, tier)
-    conf_text = render_conf(settings)
+async def build(request: Request):
+    form = await request.form()
 
-    context_dir = create_build_context(pg_version, conf_text)
-    tag = f"pg4all/postgres:{pg_version}-{workload.key}-{tier.key}"
+    version, wl, hw_tier = _resolve_selection(
+        form.get("pg_version"), form.get("workload"), form.get("tier")
+    )
+    groups = parameters.build_tuner_groups(wl, hw_tier)
+    recommended_by_key = {
+        row.spec.key: row.recommended_value for group in groups for row in group.rows
+    }
+
+    settings = {}
+    for spec in parameters.PARAMETER_SPECS:
+        raw = form.get(f"p_{spec.key}")
+        try:
+            number = float(raw) if raw is not None else recommended_by_key[spec.key]
+        except ValueError:
+            number = recommended_by_key[spec.key]
+        settings[spec.key] = parameters.format_conf_value(spec, number)
+
+    conf_text = render_conf(settings)
+    context_dir = create_build_context(version.major, conf_text)
+    tag = f"pg4all/postgres:{version.major}-{wl.key}-{hw_tier.key}"
     result = build_image(context_dir, tag)
 
     return templates.TemplateResponse(
         request,
         "result.html",
-        {"result": result, "pg_version": pg_versions.get(pg_version)},
+        {"result": result, "pg_version": version},
     )

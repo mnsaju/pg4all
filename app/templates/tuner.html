@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block content %}
+<form id="tuner-form" method="post" action="/build">
+  <input type="hidden" name="pg_version" value="{{ selected_version.major }}">
+  <input type="hidden" name="workload" value="{{ selected_workload.key }}">
+  <input type="hidden" name="tier" value="{{ selected_tier.key }}">
+
+  <div class="pill-row">
+    <span class="pill-row-label">PostgreSQL version</span>
+    {% for v in pg_versions %}
+    <a class="pill {% if v.major == selected_version.major %}is-active{% endif %}"
+       href="/?pg_version={{ v.major }}&workload={{ selected_workload.key }}&tier={{ selected_tier.key }}">
+      {{ v.major }} <span class="pill-meta">{{ v.full_version }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
+  <div class="pill-row">
+    <span class="pill-row-label">Workload profile</span>
+    {% for w in workloads %}
+    <a class="pill {% if w.key == selected_workload.key %}is-active{% endif %}"
+       href="/?pg_version={{ selected_version.major }}&workload={{ w.key }}&tier={{ selected_tier.key }}">
+      {{ w.label }}
+    </a>
+    {% endfor %}
+  </div>
+
+  <div class="pill-row">
+    <span class="pill-row-label">Hardware tier</span>
+    {% for t in tiers %}
+    <a class="pill {% if t.key == selected_tier.key %}is-active{% endif %}"
+       href="/?pg_version={{ selected_version.major }}&workload={{ selected_workload.key }}&tier={{ t.key }}">
+      {{ t.label.split(' (')[0] }}
+    </a>
+    {% endfor %}
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat-tile">
+      <span class="stat-label">Parameters tuned</span>
+      <span class="stat-value" id="stat-tuned-count">{{ stats.tuned_count }} / {{ stats.total_count }}</span>
+    </div>
+    <div class="stat-tile">
+      <span class="stat-label">Avg impact score</span>
+      <span class="stat-value" id="stat-avg-impact">{{ stats.avg_impact }} / 100</span>
+    </div>
+    <div class="stat-tile">
+      <span class="stat-label">Restart required</span>
+      <span class="stat-value" id="stat-restart">{{ "Yes" if stats.restart_required else "No" }}</span>
+    </div>
+    <div class="stat-tile">
+      <span class="stat-label">Active preset</span>
+      <span class="stat-value">{{ selected_workload.label }}</span>
+    </div>
+  </div>
+
+  {% for group in groups %}
+  <h2 class="category-heading">{{ group.label }}</h2>
+  {% for row in group.rows %}
+  <div class="param-card">
+    <div class="param-info">
+      <div class="param-name-row">
+        <span class="param-name">{{ row.spec.key }}</span>
+        {% if row.spec.restart_required %}<span class="badge badge-restart">*restart</span>{% endif %}
+      </div>
+      <p class="param-desc">{{ row.spec.description }}</p>
+      <div class="param-meta-row">
+        <span class="param-impact">Impact: {{ row.spec.impact }}/100</span>
+        <span class="badge badge-risk-{{ row.spec.risk }}">{{ row.spec.risk }} risk</span>
+      </div>
+    </div>
+    <div class="param-slider">
+      <div class="param-value-row">
+        <span>Default: {{ row.default_display }}</span>
+        <span class="param-arrow">{{ row.comparison }}</span>
+        <span class="param-target" id="target-{{ row.spec.key }}">{{ row.recommended_display }}</span>
+      </div>
+      <input
+        type="range"
+        class="tuner-slider"
+        name="p_{{ row.spec.key }}"
+        id="slider-{{ row.spec.key }}"
+        min="{{ row.spec.min_value }}"
+        max="{{ row.spec.max_value }}"
+        step="{{ row.spec.step }}"
+        value="{{ row.recommended_value }}"
+        data-key="{{ row.spec.key }}"
+        data-default="{{ row.default_value }}"
+        data-impact="{{ row.spec.impact }}"
+        data-restart="{{ '1' if row.spec.restart_required else '0' }}"
+        data-unit="{{ row.spec.unit }}"
+        data-decimals="{{ row.spec.decimals if row.spec.kind == 'float' else 0 }}"
+      >
+      <div class="slider-range-labels">
+        <span>{{ row.spec.min_value }} {{ row.spec.unit }}</span>
+        <span>{{ row.spec.max_value }} {{ row.spec.unit }}</span>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  {% endfor %}
+
+  <div class="action-bar">
+    <button type="submit" class="btn btn-primary">Generate &amp; Build Image</button>
+    <button type="reset" class="btn btn-secondary">Reset to Recommended</button>
+  </div>
+</form>
+
+<script src="/static/tuner.js"></script>
+{% endblock %}

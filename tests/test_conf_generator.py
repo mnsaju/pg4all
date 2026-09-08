@@ -27,3 +27,16 @@ def test_render_conf_produces_key_value_lines():
     settings = generate_conf(workload, tier)
     text = render_conf(settings)
     assert "max_connections = 200" in text
+
+
+def test_max_wal_size_scales_with_tier():
+    workload = workloads.get("oltp")
+    assert generate_conf(workload, hardware.get("small"))["max_wal_size"] == "1GB"
+    assert generate_conf(workload, hardware.get("large"))["max_wal_size"] == "8GB"
+
+
+def test_desktop_disables_slow_query_logging():
+    workload = workloads.get("desktop")
+    tier = hardware.get("small")
+    settings = generate_conf(workload, tier)
+    assert settings["log_min_duration_statement"] == "-1"

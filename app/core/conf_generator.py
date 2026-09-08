@@ -26,13 +26,35 @@ _WORK_MEM_RATIO_BY_WORKLOAD = {
     "desktop": 1 / 16,
 }
 
-_STATISTICS_TARGET_BY_WORKLOAD = {
-    "dw": 500,
-}
-
 _STORAGE_COSTS = {
     "ssd": {"random_page_cost": 1.1, "effective_io_concurrency": 200},
     "hdd": {"random_page_cost": 4, "effective_io_concurrency": 2},
+}
+
+# The four settings below aren't part of PGTune's own formulas — these
+# are pg4all's own heuristics, kept in the same tier/workload-lookup
+# style as the ones above rather than a more elaborate model.
+
+_MAX_WAL_SIZE_BY_TIER = {
+    "small": "1GB",
+    "medium": "4GB",
+    "large": "8GB",
+}
+
+_LOG_MIN_DURATION_MS_BY_WORKLOAD = {
+    "web": 1000,
+    "oltp": 1000,
+    "dw": 5000,
+    "mixed": 1000,
+    "desktop": -1,
+}
+
+_VACUUM_SCALE_FACTOR_BY_WORKLOAD = {
+    "web": 0.05,
+    "oltp": 0.05,
+    "dw": 0.1,
+    "mixed": 0.05,
+    "desktop": 0.2,
 }
 
 
@@ -57,6 +79,7 @@ def generate_conf(workload: Workload, hardware: HardwareTier) -> dict[str, str]:
     )
 
     storage_costs = _STORAGE_COSTS[hardware.storage]
+    autovacuum_max_workers = min(max(hardware.vcpu // 2, 3), 8)
 
     settings = {
         "max_connections": str(max_connections),
@@ -66,14 +89,18 @@ def generate_conf(workload: Workload, hardware: HardwareTier) -> dict[str, str]:
         "work_mem": f"{work_mem_kb}kB",
         "wal_buffers": f"{wal_buffers_kb}kB",
         "checkpoint_completion_target": "0.9",
-        "default_statistics_target": str(
-            _STATISTICS_TARGET_BY_WORKLOAD.get(workload.key, 100)
-        ),
         "random_page_cost": str(storage_costs["random_page_cost"]),
         "effective_io_concurrency": str(storage_costs["effective_io_concurrency"]),
         "max_worker_processes": str(hardware.vcpu),
-        "max_parallel_workers": str(hardware.vcpu),
         "max_parallel_workers_per_gather": str(max(hardware.vcpu // 2, 1)),
+        "max_wal_size": _MAX_WAL_SIZE_BY_TIER.get(hardware.key, "4GB"),
+        "log_min_duration_statement": str(
+            _LOG_MIN_DURATION_MS_BY_WORKLOAD.get(workload.key, 1000)
+        ),
+        "autovacuum_max_workers": str(autovacuum_max_workers),
+        "autovacuum_vacuum_scale_factor": str(
+            _VACUUM_SCALE_FACTOR_BY_WORKLOAD.get(workload.key, 0.1)
+        ),
     }
     return settings
 

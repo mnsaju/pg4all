@@ -1,33 +1,42 @@
 # pg4all
 
 A small, incremental alternative to Pigsty. Where Pigsty is a full
-Ansible-driven fleet platform, pg4all v1 is just a console that helps you
-pick a PostgreSQL version and workload, generates a tuned
-`postgresql.conf`, and builds a Docker image with it baked in.
+Ansible-driven fleet platform, pg4all v1 is a single-page Config Tuner
+console: pick a PostgreSQL version, workload profile, and hardware tier,
+fine-tune individual parameters with sliders, and build a Docker image
+with the resulting `postgresql.conf` baked in.
 
 ## v1 scope
 
 - Official upstream `postgres` Docker images, Debian-slim only (no RHEL/UBI
   variant yet, no from-source build).
 - Pick from the latest 3 supported PostgreSQL majors (`app/core/pg_versions.py`
-  — hardcoded, update by hand when a new major ships).
-- Pick a workload type (web / OLTP / data warehouse / mixed / desktop —
-  PGTune's own categories). This drives:
-  - a recommended hardware tier (small / medium / large presets — not a
-    precise sizing calculator; there's no data-volume/throughput input to
-    justify more precision than that yet).
-  - a generated `postgresql.conf`, once the hardware tier is confirmed,
-    using sizing formulas ported from PGTune rather than re-derived.
-- Build the resulting Docker image on demand.
+  — hardcoded, update by hand when a new major/minor ships).
+- Pick a workload profile (web / OLTP / data warehouse / mixed / desktop —
+  PGTune's own categories) and a hardware tier (small / medium / large
+  presets — not a precise sizing calculator; there's no data-volume/
+  throughput input to justify more precision than that yet). Together
+  these compute a recommended value for each of 15 tunable parameters,
+  grouped into Memory / Connections / Query / WAL / Logging / Autovacuum.
+- Each parameter is shown against PostgreSQL's real stock default (not a
+  live "current" value — pg4all doesn't connect to a running database),
+  with an advisory impact score, risk level, and whether changing it
+  needs a restart (cross-checked against real parameter contexts, not
+  just editorial). Override any of them with its slider before building.
+- Build the resulting Docker image on demand, with your final values.
 
 Nothing here is persisted — no database, no accounts. It's a stateless
 form-driven tool for a single trusted operator.
 
 ## Architecture
 
-- FastAPI + Jinja2, server-rendered HTML forms, no JS framework.
-- `app/core/` — pure, testable logic: version list, workload definitions,
-  hardware tiers, and the conf generator. No FastAPI imports in here.
+- FastAPI + Jinja2, server-rendered HTML, one small vanilla-JS file
+  (`app/static/tuner.js`) for live slider feedback — no JS framework.
+- `app/core/` — pure, testable logic: version list, workload/hardware
+  definitions, the conf generator, PostgreSQL's stock defaults
+  (`pg_defaults.py`), and the tunable-parameter registry
+  (`parameters.py`, which also groups everything for the UI). No
+  FastAPI imports in here.
 - `app/builder/` — writes the Dockerfile + conf to a build context
   directory, then triggers the build.
 - The console itself runs as its own container on a VM and triggers builds

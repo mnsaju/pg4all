@@ -13,19 +13,30 @@
         <span class="brand-mark">pg4all</span>
         <span class="brand-tag">console</span>
       </div>
-      <nav class="nav">
-        <a class="nav-item is-active" href="/">Build Image</a>
-        <span class="nav-item is-disabled">Image Registry<em class="soon">soon</em></span>
-        <span class="nav-item is-disabled">Cluster Templates<em class="soon">soon</em></span>
-        <span class="nav-item is-disabled">Settings<em class="soon">soon</em></span>
-      </nav>
+
+      <div class="nav-group">
+        <span class="nav-group-label">Build</span>
+        <nav class="nav">
+          <a class="nav-item is-active" href="/">Config Tuner</a>
+        </nav>
+      </div>
+
+      <div class="nav-group">
+        <span class="nav-group-label">Roadmap</span>
+        <nav class="nav">
+          <span class="nav-item is-disabled">Image Registry<em class="soon">soon</em></span>
+          <span class="nav-item is-disabled">Cluster Templates<em class="soon">soon</em></span>
+          <span class="nav-item is-disabled">Settings<em class="soon">soon</em></span>
+        </nav>
+      </div>
+
       <div class="sidebar-footer">v1 &middot; self-hosted</div>
     </aside>
 
     <div class="main">
       <header class="topbar">
-        <h1>{% block page_title %}Build Image{% endblock %}</h1>
-        <p class="subtitle">{% block page_subtitle %}Pick a PostgreSQL version and workload, get a tuned image.{% endblock %}</p>
+        <h1>{% block page_title %}Config Tuner{% endblock %}</h1>
+        <p class="subtitle">{% block page_subtitle %}AI-free, formula-based PostgreSQL configuration — compare stock defaults against recommended values for your workload.{% endblock %}</p>
       </header>
       <main class="content">
         {% block content %}{% endblock %}
