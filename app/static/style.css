@@ -270,6 +270,7 @@ code {
 }
 
 .badge-restart { background: var(--warning-soft); color: var(--warning); }
+.badge-preload { background: var(--warning-soft); color: var(--warning); }
 .badge-risk-low { background: var(--success-soft); color: var(--success); }
 .badge-risk-medium { background: var(--warning-soft); color: var(--warning); }
 .badge-risk-high { background: var(--danger-soft); color: var(--danger); }

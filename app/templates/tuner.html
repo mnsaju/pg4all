@@ -52,6 +52,10 @@
       <span class="stat-label">Active preset</span>
       <span class="stat-value">{{ selected_workload.label }}</span>
     </div>
+    <div class="stat-tile">
+      <span class="stat-label">Extensions enabled</span>
+      <span class="stat-value" id="stat-ext-count">{{ selected_extension_keys|length }} / {{ extensions|length }}</span>
+    </div>
   </div>
 
   {% for group in groups %}
@@ -121,6 +125,48 @@
     </div>
   </div>
   {% endfor %}
+  {% endfor %}
+
+  <h2 class="category-heading">Extensions — built-in (no extra image layer)</h2>
+  {% for ext in extensions if ext.source == 'contrib' %}
+  <div class="param-card">
+    <div class="param-info" style="flex: 1 1 100%;">
+      <label class="param-name-row" style="cursor: pointer;">
+        <input
+          type="checkbox"
+          class="ext-control"
+          name="extensions"
+          value="{{ ext.key }}"
+          {% if ext.key in selected_extension_keys %}checked{% endif %}
+        >
+        <span class="param-name">{{ ext.label }}</span>
+        {% if ext.requires_preload %}<span class="badge badge-preload">preload</span>{% endif %}
+        <span class="badge badge-risk-{{ ext.risk }}">{{ ext.risk }} risk</span>
+      </label>
+      <p class="param-desc">{{ ext.description }}</p>
+    </div>
+  </div>
+  {% endfor %}
+
+  <h2 class="category-heading">Extensions — requires an extra package layer</h2>
+  {% for ext in extensions if ext.source == 'apt' %}
+  <div class="param-card">
+    <div class="param-info" style="flex: 1 1 100%;">
+      <label class="param-name-row" style="cursor: pointer;">
+        <input
+          type="checkbox"
+          class="ext-control"
+          name="extensions"
+          value="{{ ext.key }}"
+          {% if ext.key in selected_extension_keys %}checked{% endif %}
+        >
+        <span class="param-name">{{ ext.label }}</span>
+        {% if ext.requires_preload %}<span class="badge badge-preload">preload</span>{% endif %}
+        <span class="badge badge-risk-{{ ext.risk }}">{{ ext.risk }} risk</span>
+      </label>
+      <p class="param-desc">{{ ext.description }}</p>
+    </div>
+  </div>
   {% endfor %}
 
   <div class="action-bar">

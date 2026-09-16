@@ -1,3 +1,5 @@
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -5,9 +7,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.builder import credential_store
 from app.builder.dockerfile_gen import create_build_context
 from app.builder.docker_build import build_image
-from app.core import hardware, parameters, pg_versions, workloads
+from app.core import credentials, extensions, hardware, parameters, pg_versions, workloads
 from app.core.conf_generator import render_conf
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -59,6 +62,9 @@ def _tuner_stats(groups: list[parameters.CategoryGroup]) -> dict:
 def index(request: Request, pg_version: str | None = None, workload: str | None = None, tier: str | None = None):
     version, wl, hw_tier = _resolve_selection(pg_version, workload, tier)
     groups = parameters.build_tuner_groups(wl, hw_tier)
+    default_extension_keys = {
+        e.key for e in extensions.list_extensions() if e.default_selected
+    }
 
     return templates.TemplateResponse(
         request,
@@ -72,6 +78,8 @@ def index(request: Request, pg_version: str | None = None, workload: str | None 
             "selected_tier": hw_tier,
             "groups": groups,
             "stats": _tuner_stats(groups),
+            "extensions": extensions.list_extensions(),
+            "selected_extension_keys": default_extension_keys,
         },
     )
 
@@ -100,13 +108,46 @@ async def build(request: Request):
                 value = recommended_by_key[spec.key]
         settings[spec.key] = parameters.format_conf_value(spec, value)
 
+    selected_extensions = extensions.resolve(form.getlist("extensions"))
+    preload = extensions.preload_libraries(selected_extensions)
+    if preload:
+        settings["shared_preload_libraries"] = f"'{','.join(preload)}'"
+    settings.update(extensions.extra_conf_settings(selected_extensions))
+
     conf_text = render_conf(settings)
-    context_dir = create_build_context(version.major, conf_text)
+    build_id = uuid.uuid4().hex
+    context_dir = create_build_context(
+        version.major, conf_text, selected_extensions, build_id=build_id
+    )
     tag = f"pg4all/postgres:{version.major}-{wl.key}-{hw_tier.key}"
     result = build_image(context_dir, tag)
+
+    record = credentials.CredentialRecord(
+        build_id=build_id,
+        username=credentials.ADMIN_USERNAME,
+        password=credentials.generate_password(),
+        image_tag=tag,
+        pg_major=version.major,
+        created_at=datetime.now(UTC).isoformat(),
+        build_ok=result.ok,
+    )
+    credential_store.save_credential(record)
 
     return templates.TemplateResponse(
         request,
         "result.html",
-        {"result": result, "pg_version": version},
+        {"result": result, "pg_version": version, "credential": record},
+    )
+
+
+@app.get("/credentials/{build_id}", response_class=HTMLResponse)
+def show_credential(request: Request, build_id: str):
+    record = credential_store.load_credential(build_id)
+    if record is None:
+        return templates.TemplateResponse(
+            request, "credential_not_found.html", {"build_id": build_id}, status_code=404
+        )
+
+    return templates.TemplateResponse(
+        request, "credential.html", {"credential": record}
     )

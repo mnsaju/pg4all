@@ -31,8 +31,21 @@ with the resulting `postgresql.conf` baked in.
   as a deliberate, informed choice for the operator.
 - Build the resulting Docker image on demand, with your final values.
 
-Nothing here is persisted — no database, no accounts. It's a stateless
-form-driven tool for a single trusted operator.
+No database, no accounts. The one thing pg4all *does* persist is the
+generated superuser credential for each build (see below) — everything
+else is stateless, form-driven, for a single trusted operator.
+
+Each build also generates a random password for the stock `postgres`
+superuser and stores it encrypted on disk, keyed by build id
+(`app/core/credentials.py`, `app/builder/credential_store.py`). The
+password is never baked into the image — it's handed to you on the result
+page (and again anytime at `/credentials/<build_id>`) to pass as
+`POSTGRES_PASSWORD` when you `docker run` the image, the same mechanism the
+official postgres image already uses. The encryption key
+(`secrets/master.key`) is generated locally on first use and lives next to
+the ciphertext (`credentials/`) — this protects against casual exposure
+(backups, accidental commits, screenshots), not a full compromise of the
+host the console runs on. Both directories are gitignored.
 
 ## Architecture
 

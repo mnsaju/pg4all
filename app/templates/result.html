@@ -15,5 +15,7 @@
 <div class="log-panel">{% for line in result.log %}{{ line }}
 {% endfor %}</div>
 
+{% include "_credentials.html" %}
+
 <a href="/" class="btn-link">&larr; back to Config Tuner</a>
 {% endblock %}

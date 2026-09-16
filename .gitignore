@@ -5,5 +5,9 @@ __pycache__/
 build_output/
 .pytest_cache/
 
+# Per-build superuser credentials and their encryption key — never commit.
+secrets/
+credentials/
+
 # Reference screenshots dropped at repo root for design work, not app assets.
 /image-*.png

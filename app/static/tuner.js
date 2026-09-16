@@ -91,4 +91,22 @@
       recomputeStats();
     }, 0);
   });
+
+  // Extension checkboxes: just keep the "Extensions enabled" tile in sync.
+  var extControls = Array.prototype.slice.call(form.querySelectorAll(".ext-control"));
+
+  function recomputeExtStats() {
+    var extCountEl = document.getElementById("stat-ext-count");
+    if (!extCountEl) return;
+    var checked = extControls.filter(function (el) { return el.checked; }).length;
+    extCountEl.textContent = checked + " / " + extControls.length;
+  }
+
+  extControls.forEach(function (el) {
+    el.addEventListener("change", recomputeExtStats);
+  });
+
+  form.addEventListener("reset", function () {
+    setTimeout(recomputeExtStats, 0);
+  });
 })();
