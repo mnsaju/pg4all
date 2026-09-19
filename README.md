@@ -30,6 +30,14 @@ with the resulting `postgresql.conf` baked in.
   recommended `off` by default — trading away commit durability is left
   as a deliberate, informed choice for the operator.
 - Build the resulting Docker image on demand, with your final values.
+- Optionally include companion services alongside the build (`app/core/services.py`):
+  PgBouncer and a Prometheus `postgres_exporter`, each generated as a sidecar
+  container in a per-build `docker-compose.yml`; and pgBackRest, installed as
+  a package inside the Postgres image itself (it needs direct access to the
+  data directory, unlike the other two, so it doesn't fit the sidecar model)
+  with a generated single-node stanza config. None of these are orchestrated
+  further — you still run `docker compose up`, `pgbackrest backup`, etc.
+  yourself.
 
 No database, no accounts. The one thing pg4all *does* persist is the
 generated superuser credential for each build (see below) — everything
@@ -86,8 +94,11 @@ docker compose up --build -d
 
 `docker-compose.yml` builds the console image and runs it with the
 host's Docker socket mounted in, on port 8000 (override with
-`PG4ALL_PORT`). Re-running it replaces the previous container — the
-console is stateless, so nothing is lost.
+`PG4ALL_PORT`). It also bind-mounts `build_output/`, `secrets/`, and
+`credentials/` to the host, so re-running it replaces the previous
+container without losing the credential store or any per-build
+`docker-compose.yml` generated for companion services — those live at a
+real host path (`build_output/<build_id>/`) the operator can `cd` into.
 
 `./scripts/run.sh` is a thin wrapper around the same command, if you'd
 rather not type `PG4ALL_PORT=... docker compose up --build -d` directly.
@@ -104,3 +115,8 @@ rather not type `PG4ALL_PORT=... docker compose up --build -d` directly.
 - A second Docker base-image lineage (Red Hat UBI-based).
 - Auth/multi-tenancy on the console.
 - Anything beyond small/medium/large hardware presets.
+- Patroni/HA clustering: it replaces how Postgres itself is started (a
+  distributed consensus store, multi-node topology, dynamic config, leader
+  election) rather than sitting beside a single static build, which is a
+  different architecture from pg4all's "one image, one container" model
+  today. Considered and explicitly deferred, not overlooked.

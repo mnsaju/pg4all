@@ -56,6 +56,10 @@
       <span class="stat-label">Extensions enabled</span>
       <span class="stat-value" id="stat-ext-count">{{ selected_extension_keys|length }} / {{ extensions|length }}</span>
     </div>
+    <div class="stat-tile">
+      <span class="stat-label">Companion services</span>
+      <span class="stat-value" id="stat-svc-count">{{ selected_service_keys|length }} / {{ services|length }}</span>
+    </div>
   </div>
 
   {% for group in groups %}
@@ -165,6 +169,26 @@
         <span class="badge badge-risk-{{ ext.risk }}">{{ ext.risk }} risk</span>
       </label>
       <p class="param-desc">{{ ext.description }}</p>
+    </div>
+  </div>
+  {% endfor %}
+
+  <h2 class="category-heading">Companion services</h2>
+  {% for svc in services %}
+  <div class="param-card">
+    <div class="param-info" style="flex: 1 1 100%;">
+      <label class="param-name-row" style="cursor: pointer;">
+        <input
+          type="checkbox"
+          class="svc-control"
+          name="services"
+          value="{{ svc.key }}"
+          {% if svc.key in selected_service_keys %}checked{% endif %}
+        >
+        <span class="param-name">{{ svc.label }}</span>
+        <span class="badge badge-risk-{{ svc.risk }}">{{ svc.risk }} risk</span>
+      </label>
+      <p class="param-desc">{{ svc.description }}</p>
     </div>
   </div>
   {% endfor %}

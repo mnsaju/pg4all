@@ -1,0 +1,25 @@
+{# Included after _credentials.html in result.html and credential.html.
+   Expects `credential` (for build_id) plus `has_compose`/`has_pgbackrest`
+   booleans — computed by checking build_output/<build_id>/ on disk, not
+   stored on the credential record, since the build artifacts themselves
+   are just as durable as the encrypted credential store. #}
+{% if has_compose %}
+<p class="field-hint">
+  Companion services were included in this build. Start Postgres and all of
+  them together from the generated compose file:
+</p>
+<div class="log-panel">cd build_output/{{ credential.build_id }}
+docker compose up -d</div>
+{% endif %}
+
+{% if has_pgbackrest %}
+<p class="field-hint">
+  pgBackRest is installed in the image with stanza <code>main</code>
+  (<code>/etc/pgbackrest/pgbackrest.conf</code>). Mount a volume at
+  <code>/var/lib/pgbackrest</code> for the backup repository, then run the
+  stanza creation once and back up whenever you want — pg4all doesn't
+  schedule this for you:
+</p>
+<div class="log-panel">docker exec &lt;container&gt; pgbackrest --stanza=main stanza-create
+docker exec &lt;container&gt; pgbackrest --stanza=main backup</div>
+{% endif %}

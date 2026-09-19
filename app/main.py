@@ -7,10 +7,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.builder import credential_store
-from app.builder.dockerfile_gen import create_build_context
+from app.builder import compose_gen, credential_store
+from app.builder.dockerfile_gen import BUILD_OUTPUT_DIR, create_build_context
 from app.builder.docker_build import build_image
-from app.core import credentials, extensions, hardware, parameters, pg_versions, workloads
+from app.core import credentials, extensions, hardware, parameters, pg_versions, services, workloads
 from app.core.conf_generator import render_conf
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -65,6 +65,9 @@ def index(request: Request, pg_version: str | None = None, workload: str | None 
     default_extension_keys = {
         e.key for e in extensions.list_extensions() if e.default_selected
     }
+    default_service_keys = {
+        s.key for s in services.list_services() if s.default_selected
+    }
 
     return templates.TemplateResponse(
         request,
@@ -80,6 +83,8 @@ def index(request: Request, pg_version: str | None = None, workload: str | None 
             "stats": _tuner_stats(groups),
             "extensions": extensions.list_extensions(),
             "selected_extension_keys": default_extension_keys,
+            "services": services.list_services(),
+            "selected_service_keys": default_service_keys,
         },
     )
 
@@ -114,18 +119,32 @@ async def build(request: Request):
         settings["shared_preload_libraries"] = f"'{','.join(preload)}'"
     settings.update(extensions.extra_conf_settings(selected_extensions))
 
+    selected_services = services.resolve(form.getlist("services"))
+    service_apt_packages = services.apt_packages(selected_services)
+    pgbackrest_conf = (
+        services.render_pgbackrest_conf(version.major)
+        if any(s.key == "pgbackrest" for s in selected_services)
+        else None
+    )
+
     conf_text = render_conf(settings)
     build_id = uuid.uuid4().hex
     context_dir = create_build_context(
-        version.major, conf_text, selected_extensions, build_id=build_id
+        version.major,
+        conf_text,
+        selected_extensions,
+        build_id=build_id,
+        extra_apt_packages=service_apt_packages,
+        pgbackrest_conf=pgbackrest_conf,
     )
     tag = f"pg4all/postgres:{version.major}-{wl.key}-{hw_tier.key}"
     result = build_image(context_dir, tag)
 
+    password = credentials.generate_password()
     record = credentials.CredentialRecord(
         build_id=build_id,
         username=credentials.ADMIN_USERNAME,
-        password=credentials.generate_password(),
+        password=password,
         image_tag=tag,
         pg_major=version.major,
         created_at=datetime.now(UTC).isoformat(),
@@ -133,10 +152,22 @@ async def build(request: Request):
     )
     credential_store.save_credential(record)
 
+    compose_path = (
+        compose_gen.write_compose(context_dir, tag, record.username, password, selected_services)
+        if result.ok
+        else None
+    )
+
     return templates.TemplateResponse(
         request,
         "result.html",
-        {"result": result, "pg_version": version, "credential": record},
+        {
+            "result": result,
+            "pg_version": version,
+            "credential": record,
+            "has_compose": compose_path is not None,
+            "has_pgbackrest": pgbackrest_conf is not None,
+        },
     )
 
 
@@ -154,6 +185,13 @@ def show_credential(request: Request, build_id: str):
             request, "credential_not_found.html", {"build_id": build_id}, status_code=404
         )
 
+    build_dir = BUILD_OUTPUT_DIR / build_id
     return templates.TemplateResponse(
-        request, "credential.html", {"credential": record}
+        request,
+        "credential.html",
+        {
+            "credential": record,
+            "has_compose": (build_dir / "docker-compose.yml").exists(),
+            "has_pgbackrest": (build_dir / "pgbackrest.conf").exists(),
+        },
     )

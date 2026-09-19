@@ -109,4 +109,22 @@
   form.addEventListener("reset", function () {
     setTimeout(recomputeExtStats, 0);
   });
+
+  // Companion service checkboxes: same pattern, own stat tile.
+  var svcControls = Array.prototype.slice.call(form.querySelectorAll(".svc-control"));
+
+  function recomputeSvcStats() {
+    var svcCountEl = document.getElementById("stat-svc-count");
+    if (!svcCountEl) return;
+    var checked = svcControls.filter(function (el) { return el.checked; }).length;
+    svcCountEl.textContent = checked + " / " + svcControls.length;
+  }
+
+  svcControls.forEach(function (el) {
+    el.addEventListener("change", recomputeSvcStats);
+  });
+
+  form.addEventListener("reset", function () {
+    setTimeout(recomputeSvcStats, 0);
+  });
 })();
