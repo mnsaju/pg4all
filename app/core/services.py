@@ -134,7 +134,12 @@ def _pgbouncer_fragment(spec: ServiceSpec, username: str, password: str) -> str:
         f"      AUTH_TYPE: scram-sha-256\n"
         f"      POOL_MODE: transaction\n"
         f"    ports:\n"
-        f"      - \"6432:6432\"\n"
+        # edoburu/pgbouncer listens on 5432 inside the container, not on
+        # 6432 — 6432 is only the conventional host-side port for a pooler.
+        # Mapping 6432:6432 published a port nothing was bound to, so every
+        # connection through the pooler was refused while pgbouncer itself
+        # looked perfectly healthy in `docker compose ps`.
+        f"      - \"6432:5432\"\n"
         f"    depends_on:\n"
         f"      - postgres\n"
         f"    restart: unless-stopped\n"

@@ -37,3 +37,18 @@ def test_write_compose_binds_pgadmin_to_loopback_only(tmp_path):
     assert "pgadmin:" in text
     assert '"127.0.0.1:5050:80"' in text
     assert "0.0.0.0" not in text
+
+
+def test_pgbouncer_publishes_to_the_port_it_actually_listens_on():
+    """edoburu/pgbouncer binds 5432 inside the container; 6432 is only the
+    conventional host-side port for a pooler. Mapping 6432:6432 published a
+    port nothing was bound to, and pgbouncer still looked healthy in
+    `docker compose ps` while refusing every connection."""
+    text = compose_gen.render_compose(
+        "pg4all/postgres:17-oltp-medium",
+        "postgres",
+        "secret",
+        services.resolve(["pgbouncer"]),
+    )
+    assert '"6432:5432"' in text
+    assert '"6432:6432"' not in text

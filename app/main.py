@@ -206,6 +206,16 @@ async def build(request: Request):
         for spec in parameters.PARAMETER_SPECS
     }
 
+    # What the conf actually asks for, which is what the smoke test has to
+    # hold the server to. format_conf_value rounds on the way out — a
+    # work_mem slider at 10.24 MB is written as "10MB" — so comparing the
+    # running server against the unrounded slider value reports a mismatch
+    # for a value the conf never requested.
+    conf_values = {
+        spec.key: parameters.parse_value(spec, settings[spec.key])
+        for spec in parameters.PARAMETER_SPECS
+    }
+
     selected_extensions = extensions.resolve(form.getlist("extensions"))
     preload = extensions.preload_libraries(selected_extensions)
     if preload:
@@ -240,7 +250,7 @@ async def build(request: Request):
     # never invalidates the build — the image is on the daemon either way,
     # and the operator decides what to do about it.
     smoke = (
-        await run_in_threadpool(run_smoke_test, tag, values) if result.ok else None
+        await run_in_threadpool(run_smoke_test, tag, conf_values) if result.ok else None
     )
 
     password = credentials.generate_password()

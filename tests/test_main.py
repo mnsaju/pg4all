@@ -233,3 +233,26 @@ def test_smoke_test_is_skipped_when_the_build_fails(client, monkeypatch):
     assert resp.status_code == 200
     assert "Build failed" in resp.text
     assert "Smoke test" not in resp.text
+
+
+def test_smoke_test_is_held_to_the_conf_not_the_unrounded_slider(client, monkeypatch):
+    """format_conf_value rounds on the way into postgresql.conf, so the
+    server can only ever apply the rounded value. Holding it to the raw
+    slider float reports a mismatch the conf never asked for — which is
+    exactly what a real build did before this was fixed (oltp/medium
+    writes work_mem = 10MB from a recommendation of 10.24 MB)."""
+    captured = {}
+
+    def _capture(tag, requested):
+        captured.update(requested)
+        return SmokeResult(status=smoke_test.PASSED, summary="ok")
+
+    monkeypatch.setattr(main_module, "run_smoke_test", _capture)
+    resp = _submit_build(client, workload="oltp", tier="medium")
+    assert resp.status_code == 200
+
+    # Every memory value handed to the smoke test must be a whole number of
+    # megabytes, because that is all postgresql.conf can express here.
+    assert captured["work_mem"] == 10
+    for spec in (s for s in main_module.parameters.PARAMETER_SPECS if s.kind == "memory_mb"):
+        assert captured[spec.key] == int(captured[spec.key]), spec.key

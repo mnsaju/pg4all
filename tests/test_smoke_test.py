@@ -38,10 +38,26 @@ def _daemon_or_skip():
 
 
 def _requested_values(workload_key: str, tier_key: str) -> dict[str, float | str]:
+    """The values the conf actually asks for, not the raw recommendations.
+
+    Mirrors what the /build route hands the smoke test. The two differ:
+    format_conf_value rounds on the way into the file, so a recommendation
+    of 10.24 MB is written as "10MB" and the server can only ever apply
+    10 MB. Comparing against the unrounded number reports a mismatch for
+    something the conf never requested.
+    """
     groups = parameters.build_tuner_groups(
         workloads.get(workload_key), hardware.get(tier_key)
     )
-    return {row.spec.key: row.recommended_value for group in groups for row in group.rows}
+    recommended = {
+        row.spec.key: row.recommended_value for group in groups for row in group.rows
+    }
+    return {
+        spec.key: parameters.parse_value(
+            spec, parameters.format_conf_value(spec, recommended[spec.key])
+        )
+        for spec in parameters.PARAMETER_SPECS
+    }
 
 
 def _build(tmp_path, monkeypatch, conf_text: str, tag: str):
