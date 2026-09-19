@@ -29,6 +29,22 @@ with the resulting `postgresql.conf` baked in.
   is an on/off choice) before building. `synchronous_commit` is never
   recommended `off` by default — trading away commit durability is left
   as a deliberate, informed choice for the operator.
+- Check the tuned set *as a whole* against the tier before building
+  (`app/core/validation.py`). Each slider is individually in range, but the
+  combination can still describe a server that won't hold up — on the small
+  tier it takes about four drags to allocate more memory than the machine
+  has, and PostgreSQL will start with that conf and get OOM-killed later
+  under load. The rules cover the worst-case memory budget
+  (`shared_buffers + wal_buffers + max_connections × work_mem +
+  autovacuum_max_workers × maintenance_work_mem` against the tier's RAM),
+  `shared_buffers` as a share of RAM, `effective_cache_size` against both
+  `shared_buffers` and RAM, parallel workers against the worker pool, high
+  `max_connections` with no pooler selected, and `synchronous_commit = off`.
+  Findings update live as you drag. An error-level finding stops the build
+  and asks you to confirm; warnings never block. The presets themselves do
+  warn in two places, by design — the data-warehouse profile runs close to
+  the memory line because its `work_mem` formula is meant to, and the OLTP
+  profile's 300 connections are exactly what the pooler advice is for.
 - Build the resulting Docker image on demand, with your final values.
 - Optionally include companion services alongside the build (`app/core/services.py`):
   PgBouncer, a Prometheus `postgres_exporter`, and pgAdmin, each generated as
@@ -62,6 +78,10 @@ host the console runs on. Both directories are gitignored.
 
 - FastAPI + Jinja2, server-rendered HTML, one small vanilla-JS file
   (`app/static/tuner.js`) for live slider feedback — no JS framework.
+  The live configuration check works the same way round: `tuner.js` POSTs
+  the form to `/validate` and drops in the HTML fragment that comes back,
+  rather than reimplementing the thresholds in JavaScript, so there is one
+  copy of each rule and it's the one `/build` enforces.
 - `app/core/` — pure, testable logic: version list, workload/hardware
   definitions, the conf generator, PostgreSQL's stock defaults
   (`pg_defaults.py`), and the tunable-parameter registry

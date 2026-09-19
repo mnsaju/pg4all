@@ -10,7 +10,9 @@ from fastapi.templating import Jinja2Templates
 from app.builder import compose_gen, credential_store
 from app.builder.dockerfile_gen import BUILD_OUTPUT_DIR, create_build_context
 from app.builder.docker_build import build_image
-from app.core import credentials, extensions, hardware, parameters, pg_versions, services, workloads
+from app.core import (
+    credentials, extensions, hardware, parameters, pg_versions, services, validation, workloads,
+)
 from app.core.conf_generator import render_conf
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -72,6 +74,36 @@ def _tuner_stats(groups: list[parameters.CategoryGroup]) -> dict:
     }
 
 
+def _submitted_values(form, wl, hw_tier) -> dict[str, float | str]:
+    """Every tunable parameter's submitted value, in its native unit.
+
+    Anything missing or unparseable falls back to the recommendation for
+    the workload/tier pair, so a partial or hand-crafted POST can never
+    produce a half-populated conf. Shared by `/validate` and `/build` so
+    both judge exactly the same numbers.
+    """
+    groups = parameters.build_tuner_groups(wl, hw_tier)
+    recommended_by_key = {
+        row.spec.key: row.recommended_value for group in groups for row in group.rows
+    }
+
+    values: dict[str, float | str] = {}
+    for spec in parameters.PARAMETER_SPECS:
+        raw = form.get(f"p_{spec.key}")
+        if spec.kind == "enum":
+            values[spec.key] = (
+                raw if raw in (spec.choices or ()) else recommended_by_key[spec.key]
+            )
+        else:
+            try:
+                values[spec.key] = (
+                    float(raw) if raw is not None else recommended_by_key[spec.key]
+                )
+            except ValueError:
+                values[spec.key] = recommended_by_key[spec.key]
+    return values
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, pg_version: str | None = None, workload: str | None = None, tier: str | None = None):
     version, wl, hw_tier = _resolve_selection(pg_version, workload, tier)
@@ -99,7 +131,38 @@ def index(request: Request, pg_version: str | None = None, workload: str | None 
             "selected_extension_keys": default_extension_keys,
             "services": services.list_services(),
             "selected_service_keys": default_service_keys,
+            "findings": validation.validate(
+                {
+                    row.spec.key: row.recommended_value
+                    for group in groups
+                    for row in group.rows
+                },
+                hw_tier,
+                frozenset(default_service_keys),
+            ),
         },
+    )
+
+
+@app.post("/validate", response_class=HTMLResponse)
+async def validate_settings(request: Request):
+    """Findings for the parameter set currently in the form.
+
+    The tuner page POSTs here as the operator drags sliders and renders
+    the returned fragment, so the thresholds stay in `app/core/validation.py`
+    instead of being reimplemented in JavaScript.
+    """
+    form = await request.form()
+    _version, wl, hw_tier = _resolve_selection(
+        form.get("pg_version"), form.get("workload"), form.get("tier")
+    )
+    findings = validation.validate(
+        _submitted_values(form, wl, hw_tier),
+        hw_tier,
+        frozenset(form.getlist("services")),
+    )
+    return templates.TemplateResponse(
+        request, "_findings.html", {"findings": findings}
     )
 
 
@@ -110,22 +173,36 @@ async def build(request: Request):
     version, wl, hw_tier = _resolve_selection(
         form.get("pg_version"), form.get("workload"), form.get("tier")
     )
-    groups = parameters.build_tuner_groups(wl, hw_tier)
-    recommended_by_key = {
-        row.spec.key: row.recommended_value for group in groups for row in group.rows
-    }
+    values = _submitted_values(form, wl, hw_tier)
+    findings = validation.validate(
+        values, hw_tier, frozenset(form.getlist("services"))
+    )
 
-    settings = {}
-    for spec in parameters.PARAMETER_SPECS:
-        raw = form.get(f"p_{spec.key}")
-        if spec.kind == "enum":
-            value = raw if raw in (spec.choices or ()) else recommended_by_key[spec.key]
-        else:
-            try:
-                value = float(raw) if raw is not None else recommended_by_key[spec.key]
-            except ValueError:
-                value = recommended_by_key[spec.key]
-        settings[spec.key] = parameters.format_conf_value(spec, value)
+    # An error-level finding describes a configuration that will start and
+    # then fail later under load, so it stops the build here rather than
+    # spending minutes producing an image that can't hold up. The operator
+    # can still override — this is advisory arithmetic, and they may know
+    # something about the deployment that the tier presets don't capture.
+    if validation.has_errors(findings) and form.get("acknowledge") != "1":
+        return templates.TemplateResponse(
+            request,
+            "confirm_build.html",
+            {
+                "findings": findings,
+                "tier": hw_tier,
+                "resubmit_fields": [
+                    (name, value)
+                    for name, value in form.multi_items()
+                    if name != "acknowledge"
+                ],
+            },
+            status_code=422,
+        )
+
+    settings = {
+        spec.key: parameters.format_conf_value(spec, values[spec.key])
+        for spec in parameters.PARAMETER_SPECS
+    }
 
     selected_extensions = extensions.resolve(form.getlist("extensions"))
     preload = extensions.preload_libraries(selected_extensions)
@@ -176,6 +253,7 @@ async def build(request: Request):
             "result": result,
             "pg_version": version,
             "credential": record,
+            "findings": findings,
             **_build_dir_flags(context_dir),
         },
     )

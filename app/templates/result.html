@@ -15,6 +15,15 @@
 <div class="log-panel">{% for line in result.log %}{{ line }}
 {% endfor %}</div>
 
+{% if findings %}
+<h2 class="category-heading">Configuration check</h2>
+<p class="field-hint">
+  The image was built with these outstanding — they describe runtime
+  behaviour, not build failures.
+</p>
+{% include "_findings.html" %}
+{% endif %}
+
 {% include "_credentials.html" %}
 {% include "_compose_instructions.html" %}
 

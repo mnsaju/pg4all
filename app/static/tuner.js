@@ -127,4 +127,40 @@
   form.addEventListener("reset", function () {
     setTimeout(recomputeSvcStats, 0);
   });
+
+  // Cross-parameter findings. The rules are arithmetic over the whole set
+  // against the hardware tier, and they live in app/core/validation.py —
+  // so rather than reimplement them here and have two copies drift apart,
+  // post the form back and render what the server returns.
+  var panel = document.getElementById("findings-panel");
+  if (!panel) return;
+
+  var pending = null;
+  var inFlight = false;
+
+  function refreshFindings() {
+    if (inFlight) return;
+    inFlight = true;
+    fetch(panel.dataset.validateUrl, { method: "POST", body: new FormData(form) })
+      .then(function (response) { return response.ok ? response.text() : null; })
+      .then(function (html) {
+        if (html !== null) panel.innerHTML = html;
+      })
+      .catch(function () {
+        // A failed check shouldn't block tuning; the /build POST
+        // re-validates server-side regardless of what's on screen.
+      })
+      .finally(function () { inFlight = false; });
+  }
+
+  function scheduleRefresh() {
+    clearTimeout(pending);
+    pending = setTimeout(refreshFindings, 250);
+  }
+
+  form.addEventListener("input", scheduleRefresh);
+  form.addEventListener("change", scheduleRefresh);
+  form.addEventListener("reset", function () {
+    setTimeout(scheduleRefresh, 0);
+  });
 })();

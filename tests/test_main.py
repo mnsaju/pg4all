@@ -111,3 +111,69 @@ def test_builds_list_shows_a_build_just_made(client):
     resp = client.get("/builds")
     assert resp.status_code == 200
     assert build_id in resp.text
+
+
+def test_validate_endpoint_returns_findings_for_an_overcommitted_set(client):
+    resp = client.post(
+        "/validate",
+        data={
+            "pg_version": "17", "workload": "oltp", "tier": "small",
+            "p_max_connections": "500", "p_work_mem": "64",
+        },
+    )
+    assert resp.status_code == 200
+    assert "Worst-case memory exceeds the tier" in resp.text
+    assert "error" in resp.text
+
+
+def test_validate_endpoint_is_quiet_for_a_sane_set(client):
+    resp = client.post(
+        "/validate",
+        data={
+            "pg_version": "17", "workload": "mixed", "tier": "medium",
+            "services": ["pgbouncer"],
+        },
+    )
+    assert resp.status_code == 200
+    assert "Worst-case memory exceeds the tier" not in resp.text
+
+
+def test_build_is_blocked_by_an_error_level_finding(client):
+    resp = _submit_build(
+        client, tier="small", p_max_connections="500", p_work_mem="64"
+    )
+    assert resp.status_code == 422
+    assert "Build stopped before it started" in resp.text
+    assert "Worst-case memory exceeds the tier" in resp.text
+    assert "Build succeeded" not in resp.text
+
+
+def test_blocked_build_can_be_overridden_by_acknowledging(client):
+    resp = _submit_build(
+        client, tier="small", p_max_connections="500", p_work_mem="64",
+        acknowledge="1",
+    )
+    assert resp.status_code == 200
+    assert "Build succeeded" in resp.text
+
+
+def test_warning_level_findings_do_not_block_the_build(client):
+    resp = _submit_build(client, p_synchronous_commit="off")
+    assert resp.status_code == 200
+    assert "Build succeeded" in resp.text
+    assert "synchronous_commit is off" in resp.text
+
+
+def test_confirm_page_preserves_the_submitted_selection(client):
+    resp = _submit_build(
+        client, tier="small", p_max_connections="500", p_work_mem="64",
+        services=["pgbouncer", "pgadmin"], extensions=["pg_stat_statements"],
+    )
+    assert resp.status_code == 422
+    # Everything needed to rebuild the exact same request must be echoed
+    # back, or "Build anyway" would silently build something different.
+    assert 'name="p_max_connections" value="500"' in resp.text
+    assert 'name="services" value="pgbouncer"' in resp.text
+    assert 'name="services" value="pgadmin"' in resp.text
+    assert 'name="extensions" value="pg_stat_statements"' in resp.text
+    assert 'name="tier" value="small"' in resp.text

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block page_title %}Config Tuner{% endblock %}
+{% block page_subtitle %}This configuration won't hold up on the {{ tier.label }} tier{% endblock %}
+{% block content %}
+<div class="status-banner error">Build stopped before it started</div>
+
+<p class="field-hint">
+  These are not syntax errors — PostgreSQL would start with this conf and
+  fail later, under load. Go back and adjust the parameters, or build it
+  anyway if you know something about the deployment the tier presets don't.
+</p>
+
+{% include "_findings.html" %}
+
+<form method="post" action="/build">
+  {% for name, value in resubmit_fields %}
+  <input type="hidden" name="{{ name }}" value="{{ value }}">
+  {% endfor %}
+  <input type="hidden" name="acknowledge" value="1">
+  <div class="action-bar">
+    <a href="/" class="btn btn-primary">&larr; Back to the tuner</a>
+    <button type="submit" class="btn btn-secondary">Build anyway</button>
+  </div>
+</form>
+{% endblock %}

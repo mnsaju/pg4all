@@ -1,0 +1,18 @@
+{# Cross-parameter findings. Rendered inline on the tuner (swapped in by
+   tuner.js after each change), and again on the confirm and result pages. #}
+{% if findings %}
+<div class="findings">
+  {% for finding in findings %}
+  <div class="finding finding-{{ finding.level }}">
+    <div class="finding-head">
+      <span class="badge badge-finding-{{ finding.level }}">{{ finding.level }}</span>
+      <span class="finding-summary">{{ finding.summary }}</span>
+    </div>
+    <p class="finding-detail">{{ finding.detail }}</p>
+    <div class="finding-keys">
+      {% for key in finding.parameter_keys %}<code>{{ key }}</code>{% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
