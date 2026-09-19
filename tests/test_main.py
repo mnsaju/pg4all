@@ -15,8 +15,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main_module
-from app.builder import credential_store, dockerfile_gen
+from app.builder import credential_store, dockerfile_gen, smoke_test
 from app.builder.docker_build import BuildResult
+from app.builder.smoke_test import SmokeResult
 
 _BUILD_ID_RE = re.compile(r"/credentials/([a-f0-9]{32})")
 
@@ -32,6 +33,19 @@ def client(tmp_path, monkeypatch):
         main_module,
         "build_image",
         lambda context_dir, tag: BuildResult(ok=True, tag=tag, log=["Successfully built"]),
+    )
+    # Without this the route boots a real container per test against the
+    # real daemon — slow, and dependent on which images happen to exist on
+    # the host. tests/test_smoke_test.py covers the real thing behind a
+    # marker; here it's a canned pass.
+    monkeypatch.setattr(
+        main_module,
+        "run_smoke_test",
+        lambda tag, requested: SmokeResult(
+            status=smoke_test.PASSED,
+            summary="PostgreSQL started and all tuned settings took effect.",
+            log=["Started test container."],
+        ),
     )
     return TestClient(main_module.app)
 
@@ -177,3 +191,45 @@ def test_confirm_page_preserves_the_submitted_selection(client):
     assert 'name="services" value="pgadmin"' in resp.text
     assert 'name="extensions" value="pg_stat_statements"' in resp.text
     assert 'name="tier" value="small"' in resp.text
+
+
+def test_result_page_shows_the_smoke_test_outcome(client):
+    resp = _submit_build(client)
+    assert resp.status_code == 200
+    assert "Smoke test passed" in resp.text
+
+
+def test_a_failing_smoke_test_does_not_invalidate_the_build(client, monkeypatch):
+    """The image exists on the daemon either way. Reporting the failure is
+    the job here; deciding what to do about it is the operator's."""
+    monkeypatch.setattr(
+        main_module,
+        "run_smoke_test",
+        lambda tag, requested: SmokeResult(
+            status=smoke_test.FAILED,
+            summary="PostgreSQL did not start with this configuration.",
+            log=["FATAL: could not start"],
+        ),
+    )
+    resp = _submit_build(client)
+    assert resp.status_code == 200
+    assert "Build succeeded" in resp.text
+    assert "Smoke test failed" in resp.text
+    assert "Username: postgres" in resp.text  # credentials still handed over
+
+
+def test_smoke_test_is_skipped_when_the_build_fails(client, monkeypatch):
+    monkeypatch.setattr(
+        main_module,
+        "build_image",
+        lambda context_dir, tag: BuildResult(ok=False, tag=tag, log=["Build failed"]),
+    )
+
+    def _fail(tag, requested):
+        raise AssertionError("smoke test must not run against an image that failed to build")
+
+    monkeypatch.setattr(main_module, "run_smoke_test", _fail)
+    resp = _submit_build(client)
+    assert resp.status_code == 200
+    assert "Build failed" in resp.text
+    assert "Smoke test" not in resp.text

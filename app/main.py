@@ -6,10 +6,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from app.builder import compose_gen, credential_store
 from app.builder.dockerfile_gen import BUILD_OUTPUT_DIR, create_build_context
 from app.builder.docker_build import build_image
+from app.builder.smoke_test import run_smoke_test
 from app.core import (
     credentials, extensions, hardware, parameters, pg_versions, services, validation, workloads,
 )
@@ -229,7 +231,17 @@ async def build(request: Request):
         pgbackrest_conf=pgbackrest_conf,
     )
     tag = f"pg4all/postgres:{version.major}-{wl.key}-{hw_tier.key}"
-    result = build_image(context_dir, tag)
+    # Both of these talk to the Docker daemon and block for minutes. In an
+    # async handler that would stall the event loop and freeze the console
+    # for every other request, so they run on a worker thread.
+    result = await run_in_threadpool(build_image, context_dir, tag)
+
+    # Only worth running against an image that exists. A failed smoke test
+    # never invalidates the build — the image is on the daemon either way,
+    # and the operator decides what to do about it.
+    smoke = (
+        await run_in_threadpool(run_smoke_test, tag, values) if result.ok else None
+    )
 
     password = credentials.generate_password()
     record = credentials.CredentialRecord(
@@ -254,6 +266,7 @@ async def build(request: Request):
             "pg_version": version,
             "credential": record,
             "findings": findings,
+            "smoke": smoke,
             **_build_dir_flags(context_dir),
         },
     )

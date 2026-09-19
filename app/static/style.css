@@ -522,3 +522,9 @@ code {
   padding: 0.1rem 0.4rem;
   border-radius: var(--radius-sm);
 }
+
+/* Smoke test */
+
+.status-banner.warn { background: var(--warning-soft); color: var(--warning); }
+.row-mismatch { background: var(--danger-soft); }
+.row-mismatch code { color: var(--danger); }

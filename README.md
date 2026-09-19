@@ -46,6 +46,16 @@ with the resulting `postgresql.conf` baked in.
   the memory line because its `work_mem` formula is meant to, and the OLTP
   profile's 300 connections are exactly what the pooler advice is for.
 - Build the resulting Docker image on demand, with your final values.
+- Smoke-test the image right after it builds (`app/builder/smoke_test.py`).
+  A successful `docker build` only proves the image assembled; PostgreSQL
+  rounds, clamps, and ignores settings at startup without complaining, so
+  the only way to know a conf did what it says is to ask a running server.
+  The test boots the image on a throwaway volume with no published ports,
+  waits for `pg_isready`, reads `pg_settings` back over the unix socket via
+  `docker exec`, and compares every tuned parameter against what you asked
+  for — then removes the container and its volume in a `finally`, on every
+  path. A failure never invalidates the build: the image is on the daemon
+  either way, and you decide what to do about it.
 - Optionally include companion services alongside the build (`app/core/services.py`):
   PgBouncer, a Prometheus `postgres_exporter`, and pgAdmin, each generated as
   a sidecar container in a per-build `docker-compose.yml`; and pgBackRest,
@@ -129,8 +139,17 @@ rather not type `PG4ALL_PORT=... docker compose up --build -d` directly.
 ## Tests
 
 ```bash
-.venv/bin/pytest
+.venv/bin/pytest            # unit tests — hermetic, about a second
+.venv/bin/pytest -m docker  # integration — builds images, runs containers
 ```
+
+The `docker`-marked tests in `tests/test_smoke_test.py` are excluded from
+the default run because they build real images and boot real containers.
+They're the only place the whole chain is exercised end to end, and that
+is where the interesting failures turn out to live: they exist because
+every image pg4all built before them was unreachable on a published port
+(see `FIXED_SETTINGS` in `app/core/conf_generator.py`), and no unit test
+in this project could have seen it.
 
 ## Deliberately deferred (not missing — scoped out for now)
 

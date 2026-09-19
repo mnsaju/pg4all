@@ -8,7 +8,10 @@ ones don't) — it isn't just editorial. Impact/risk are advisory, in the
 same spirit as the hardware tiers: a starting signal, not a guarantee.
 
 Every slider here has exactly one corresponding line in the generated
-conf (see conf_generator.generate_conf) — no hidden, untunable settings.
+conf (see conf_generator.generate_conf). The reverse doesn't quite hold:
+conf_generator.FIXED_SETTINGS adds a small number of lines that aren't
+tunable choices at all, but container-correctness settings every image
+needs regardless of workload or hardware.
 """
 
 from dataclasses import dataclass
