@@ -249,13 +249,15 @@
   </div>
   {% endfor %}
 
-  <h2 class="category-heading">Configuration check</h2>
-  <div id="findings-panel" data-validate-url="/validate">
-    {% include "_findings.html" %}
+  <div id="preview-panel" data-preview-url="/preview">
+    {% include "_preview.html" %}
   </div>
 
   <div class="action-bar">
     <button type="submit" class="btn btn-primary">Generate &amp; Build Image</button>
+    <button type="submit" class="btn btn-secondary" formaction="/preview.conf" formnovalidate>
+      Download postgresql.conf
+    </button>
     <button type="reset" class="btn btn-secondary">Reset to Recommended</button>
   </div>
 </form>

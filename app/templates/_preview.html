@@ -1,0 +1,18 @@
+{# The live half of the tuner: what is wrong with this configuration, and
+   the configuration itself. Re-fetched by tuner.js on every change, so
+   both stay in step with the sliders without any of the logic being
+   duplicated in JavaScript. #}
+<h2 class="category-heading">Configuration check</h2>
+{% if findings %}
+{% include "_findings.html" %}
+{% else %}
+<p class="field-hint">Nothing to flag for this combination.</p>
+{% endif %}
+
+<h2 class="category-heading">Generated postgresql.conf</h2>
+<p class="field-hint">
+  Exactly what would be baked into the image — and the same text the
+  download gives you, if you would rather apply it to a PostgreSQL you
+  already run.
+</p>
+<div class="log-panel log-panel-scroll conf-preview">{{ conf_text }}</div>

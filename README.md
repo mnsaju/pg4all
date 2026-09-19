@@ -56,6 +56,12 @@ with the resulting `postgresql.conf` baked in.
   the image builds fine and you may be about to stop whatever holds it.
   pgAdmin's port can move but its `127.0.0.1` bind cannot — putting the
   admin UI on the network should take more than editing a number.
+- See the generated `postgresql.conf` as you tune, and download it — from
+  the tuner or from any past build. The preview comes from the same code
+  path `/build` uses, so it cannot show one thing and build another (a test
+  asserts the two are byte-identical). This also makes the tuner useful on
+  its own: most people run PostgreSQL from a package on a machine they
+  already have, and want the conf rather than the image.
 - Build the resulting Docker image on demand, with your final values. The
   build runs in the background and streams to a page you can watch
   (`app/builder/build_store.py`): submitting returns straight away with a

@@ -703,3 +703,5 @@ code {
 }
 
 .btn-link-danger:hover { color: var(--text); }
+
+.conf-preview { max-height: 20rem; font-size: 0.82rem; }

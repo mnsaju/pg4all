@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
@@ -220,6 +220,50 @@ def _submitted_values(form, wl, hw_tier) -> dict[str, float | str]:
     return values
 
 
+def _generate_conf(form, version, values: dict[str, float | str]) -> dict:
+    """Everything a submission implies about the generated conf.
+
+    Shared by `/build` and the live preview, so what the tuner shows is by
+    construction the same text the image is built with rather than a second
+    rendering that could drift from it.
+    """
+    settings = {
+        spec.key: parameters.format_conf_value(spec, values[spec.key])
+        for spec in parameters.PARAMETER_SPECS
+    }
+
+    # What the conf actually asks for, which is what the smoke test has to
+    # hold the server to. format_conf_value rounds on the way out — a
+    # work_mem slider at 10.24 MB is written as "10MB" — so comparing the
+    # running server against the unrounded slider value reports a mismatch
+    # for a value the conf never requested.
+    conf_values = {
+        spec.key: parameters.parse_value(spec, settings[spec.key])
+        for spec in parameters.PARAMETER_SPECS
+    }
+
+    selected_extensions = extensions.resolve(form.getlist("extensions"))
+    preload = extensions.preload_libraries(selected_extensions)
+    if preload:
+        settings["shared_preload_libraries"] = f"'{','.join(preload)}'"
+    settings.update(extensions.extra_conf_settings(selected_extensions))
+
+    selected_services = services.resolve(form.getlist("services"))
+
+    return {
+        "conf_text": render_conf(settings),
+        "conf_values": conf_values,
+        "extensions": selected_extensions,
+        "services": selected_services,
+        "apt_packages": services.apt_packages(selected_services),
+        "pgbackrest_conf": (
+            services.render_pgbackrest_conf(version.major)
+            if any(s.key == "pgbackrest" for s in selected_services)
+            else None
+        ),
+    }
+
+
 def _submitted_ports(form) -> dict[str, int]:
     return ports.resolve(
         {spec.key: form.get(f"port_{spec.key}") for spec in ports.PORT_SPECS}
@@ -244,6 +288,9 @@ def index(request: Request, pg_version: str | None = None, workload: str | None 
     default_service_keys = {
         s.key for s in services.list_services() if s.default_selected
     }
+    recommended_values = {
+        row.spec.key: row.recommended_value for group in groups for row in group.rows
+    }
 
     return templates.TemplateResponse(
         request,
@@ -264,39 +311,82 @@ def index(request: Request, pg_version: str | None = None, workload: str | None 
             "port_specs": ports.PORT_SPECS,
             "host_ports": ports.defaults(),
             "findings": _all_findings(
-                {
-                    row.spec.key: row.recommended_value
-                    for group in groups
-                    for row in group.rows
-                },
-                hw_tier,
-                frozenset(default_service_keys),
+                recommended_values, hw_tier, frozenset(default_service_keys),
                 ports.defaults(),
             ),
+            "conf_text": render_conf({
+                spec.key: parameters.format_conf_value(
+                    spec, recommended_values[spec.key]
+                )
+                for spec in parameters.PARAMETER_SPECS
+            }),
         },
     )
 
 
-@app.post("/validate", response_class=HTMLResponse)
-async def validate_settings(request: Request):
-    """Findings for the parameter set currently in the form.
-
-    The tuner page POSTs here as the operator drags sliders and renders
-    the returned fragment, so the thresholds stay in `app/core/validation.py`
-    instead of being reimplemented in JavaScript.
-    """
-    form = await request.form()
-    _version, wl, hw_tier = _resolve_selection(
+def _preview_context(form) -> dict:
+    version, wl, hw_tier = _resolve_selection(
         form.get("pg_version"), form.get("workload"), form.get("tier")
     )
-    findings = _all_findings(
-        _submitted_values(form, wl, hw_tier),
-        hw_tier,
-        frozenset(form.getlist("services")),
-        _submitted_ports(form),
-    )
+    values = _submitted_values(form, wl, hw_tier)
+    return {
+        "findings": _all_findings(
+            values, hw_tier, frozenset(form.getlist("services")),
+            _submitted_ports(form),
+        ),
+        "conf_text": _generate_conf(form, version, values)["conf_text"],
+    }
+
+
+@app.post("/preview", response_class=HTMLResponse)
+async def preview(request: Request):
+    """The live half of the tuner: findings, and the conf they describe.
+
+    The page POSTs here as the operator drags sliders and renders what
+    comes back, so both the thresholds and the conf text stay server-side
+    rather than being reimplemented in JavaScript — and the preview is
+    generated by the same code path `/build` uses, so it cannot show one
+    thing and build another.
+    """
     return templates.TemplateResponse(
-        request, "_findings.html", {"findings": findings}
+        request, "_preview.html", _preview_context(await request.form())
+    )
+
+
+@app.post("/preview.conf", response_class=PlainTextResponse)
+async def download_preview_conf(request: Request):
+    """The conf for the current form, as a file.
+
+    pg4all's output has only ever been obtainable by building a Docker
+    image, which is no use to the many people who run PostgreSQL from a
+    package on a machine they already have. This is the same text, without
+    the image.
+    """
+    form = await request.form()
+    return PlainTextResponse(
+        _preview_context(form)["conf_text"],
+        headers={"Content-Disposition": 'attachment; filename="postgresql.conf"'},
+    )
+
+
+@app.get("/builds/{build_id}/postgresql.conf", response_class=PlainTextResponse)
+def download_build_conf(build_id: str):
+    """The conf a particular build was made with, read off disk."""
+    try:
+        build_dir = build_store.build_dir_for(BUILD_OUTPUT_DIR, build_id)
+    except ValueError:
+        return PlainTextResponse("Not found", status_code=404)
+
+    path = build_dir / "postgresql.conf"
+    if not path.is_file():
+        return PlainTextResponse("Not found", status_code=404)
+
+    return PlainTextResponse(
+        path.read_text(),
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="postgresql-{build_id[:8]}.conf"'
+        },
     )
 
 
@@ -334,36 +424,13 @@ async def build(request: Request, background_tasks: BackgroundTasks):
             status_code=422,
         )
 
-    settings = {
-        spec.key: parameters.format_conf_value(spec, values[spec.key])
-        for spec in parameters.PARAMETER_SPECS
-    }
-
-    # What the conf actually asks for, which is what the smoke test has to
-    # hold the server to. format_conf_value rounds on the way out — a
-    # work_mem slider at 10.24 MB is written as "10MB" — so comparing the
-    # running server against the unrounded slider value reports a mismatch
-    # for a value the conf never requested.
-    conf_values = {
-        spec.key: parameters.parse_value(spec, settings[spec.key])
-        for spec in parameters.PARAMETER_SPECS
-    }
-
-    selected_extensions = extensions.resolve(form.getlist("extensions"))
-    preload = extensions.preload_libraries(selected_extensions)
-    if preload:
-        settings["shared_preload_libraries"] = f"'{','.join(preload)}'"
-    settings.update(extensions.extra_conf_settings(selected_extensions))
-
-    selected_services = services.resolve(form.getlist("services"))
-    service_apt_packages = services.apt_packages(selected_services)
-    pgbackrest_conf = (
-        services.render_pgbackrest_conf(version.major)
-        if any(s.key == "pgbackrest" for s in selected_services)
-        else None
-    )
-
-    conf_text = render_conf(settings)
+    generated = _generate_conf(form, version, values)
+    conf_text = generated["conf_text"]
+    conf_values = generated["conf_values"]
+    selected_extensions = generated["extensions"]
+    selected_services = generated["services"]
+    service_apt_packages = generated["apt_packages"]
+    pgbackrest_conf = generated["pgbackrest_conf"]
     build_id = uuid.uuid4().hex
     context_dir = create_build_context(
         version.major,

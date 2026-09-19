@@ -128,11 +128,11 @@
     setTimeout(recomputeSvcStats, 0);
   });
 
-  // Cross-parameter findings. The rules are arithmetic over the whole set
-  // against the hardware tier, and they live in app/core/validation.py —
-  // so rather than reimplement them here and have two copies drift apart,
-  // post the form back and render what the server returns.
-  var panel = document.getElementById("findings-panel");
+  // The live panel: cross-parameter findings, and the generated conf.
+  // Both are arithmetic over the whole parameter set and both live in
+  // app/core — so rather than reimplement either here and have two copies
+  // drift apart, post the form back and render what the server returns.
+  var panel = document.getElementById("preview-panel");
   if (!panel) return;
 
   var pending = null;
@@ -141,7 +141,7 @@
   function refreshFindings() {
     if (inFlight) return;
     inFlight = true;
-    fetch(panel.dataset.validateUrl, { method: "POST", body: new FormData(form) })
+    fetch(panel.dataset.previewUrl, { method: "POST", body: new FormData(form) })
       .then(function (response) { return response.ok ? response.text() : null; })
       .then(function (html) {
         if (html !== null) panel.innerHTML = html;
