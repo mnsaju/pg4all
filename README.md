@@ -240,8 +240,9 @@ table; it needs unauthenticated requests to get nothing.
 ## Tests
 
 ```bash
-.venv/bin/pytest            # unit tests — hermetic, about a second
-.venv/bin/pytest -m docker  # integration — builds images, runs containers
+.venv/bin/pytest              # unit tests — hermetic, about a second
+.venv/bin/pytest -m docker    # integration — builds images, runs containers
+.venv/bin/pytest -m loadtest  # drives real load at a generated stack
 ```
 
 The `docker`-marked tests in `tests/test_smoke_test.py` are excluded from
@@ -251,6 +252,48 @@ is where the interesting failures turn out to live: they exist because
 every image pg4all built before them was unreachable on a published port
 (see `FIXED_SETTINGS` in `app/core/conf_generator.py`), and no unit test
 in this project could have seen it.
+
+## Load testing the dashboard
+
+An idle database makes every rate panel flat zero, so "the panel is empty"
+and "the panel is broken" look identical — which is exactly how the
+PostgreSQL 17 checkpoint-metric bug stayed hidden. `scripts/loadtest/`
+drives an ecommerce-shaped workload so the dashboard has something to show:
+
+```bash
+scripts/loadtest/run.sh all      # setup, steady, spike, forced checkpoint
+scripts/loadtest/run.sh cleanup  # remove everything it created
+```
+
+It uses `pgbench`, which is already in every image pg4all builds — no
+extra container and no new dependency. One purchase is one transaction: a
+price read, a stock update, an order insert, a line-item insert and a
+customer update, so it generates commit volume, WAL and lock activity
+rather than just SELECT load. The spike scales to 70% of *this build's*
+`max_connections`, which is what drives the connections panel visibly up
+toward its threshold line.
+
+It is a development tool, not a product feature: pg4all builds and tunes
+images, it does not offer load testing as a service.
+
+Everything it creates lives in one `pg4all_loadtest` schema, so removal is
+a single `DROP SCHEMA ... CASCADE` that cannot miss a table. Against a
+throwaway stack that is academic — `docker compose down -v` takes the
+volume anyway — but it matters the moment this is pointed at a build you
+are keeping.
+
+One honest caveat: the checkpoint panel cannot be driven by a short run.
+Checkpoints fire on `checkpoint_timeout` (15 minutes) or when WAL passes
+`max_wal_size` (gigabytes), so `run.sh` issues an explicit `CHECKPOINT` to
+give the panel a data point and says so. That is a genuine *requested*
+checkpoint, but it was forced rather than earned — in production, requested
+checkpoints outpacing timed ones is the signal that `max_wal_size` is too
+small.
+
+`tests/test_loadtest.py` runs the same scripts and asserts each panel's
+metric actually moved, directionally rather than to exact numbers —
+throughput on a shared machine is not reproducible, and a test asserting
+"2000 tps" fails for reasons that have nothing to do with pg4all.
 
 ## Deliberately deferred (not missing — scoped out for now)
 
