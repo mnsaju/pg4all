@@ -649,3 +649,41 @@ code {
 }
 
 .signout-button:hover { color: var(--sidebar-text); border-color: var(--sidebar-text-muted); }
+
+/* Build progress */
+
+.status-banner.running { background: var(--accent-soft); color: var(--text); }
+
+.spinner {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 3s; }
+}
+
+.log-panel-scroll {
+  max-height: 24rem;
+  overflow-y: auto;
+}
+
+.state-pill {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+}
+
+.state-running { background: var(--accent-soft); color: var(--text-muted); }
+.state-succeeded { background: var(--success-soft); color: var(--success); }
+.state-failed { background: var(--danger-soft); color: var(--danger); }
+.state-interrupted { background: var(--warning-soft); color: var(--warning); }

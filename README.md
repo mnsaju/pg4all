@@ -56,7 +56,12 @@ with the resulting `postgresql.conf` baked in.
   the image builds fine and you may be about to stop whatever holds it.
   pgAdmin's port can move but its `127.0.0.1` bind cannot — putting the
   admin UI on the network should take more than editing a number.
-- Build the resulting Docker image on demand, with your final values.
+- Build the resulting Docker image on demand, with your final values. The
+  build runs in the background and streams to a page you can watch
+  (`app/builder/build_store.py`): submitting returns straight away with a
+  build id, and the daemon's output appears as it arrives. It used to hold
+  the HTTP request open through the whole build and the smoke test, which
+  is a few seconds on warm layers and minutes of blank page on a cold one.
 - Smoke-test the image right after it builds (`app/builder/smoke_test.py`).
   A successful `docker build` only proves the image assembled; PostgreSQL
   rounds, clamps, and ignores settings at startup without complaining, so
@@ -112,6 +117,16 @@ host the console runs on. Both directories are gitignored.
   directory, then triggers the build. Also owns everything under
   `secrets/`: the build credential store and the console's own password
   and session key.
+- A running build's state lives on disk, in the same
+  `build_output/<build_id>/` directory as its Dockerfile — `status.json`
+  and an append-only `build.log`. That directory is bind-mounted to the
+  host, so a build can be followed with `tail -f` as well as in the
+  browser, and it survives the console restarting. In-memory jobs would
+  have been less code right up until a restart lost one mid-build while
+  the daemon carried on regardless; on disk, a build orphaned that way is
+  marked `interrupted` at startup instead of spinning forever. Note the
+  image may well have finished building even then — the console just
+  stopped watching.
 - Authentication is a middleware, not a per-route dependency, so a route
   added later is protected because it exists rather than because someone
   remembered to decorate it. `tests/test_main.py` walks the app's route

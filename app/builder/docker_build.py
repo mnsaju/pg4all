@@ -6,12 +6,20 @@ shelling out to the `docker` CLI binary, so the console image doesn't
 need the CLI installed — just the `docker` Python package and socket
 access. That socket is host-root-equivalent: this console must stay
 behind trusted-operator access only, never exposed publicly.
+
+The low-level `client.api.build` is used rather than the friendlier
+`client.images.build`, because the latter only returns once the build has
+finished and the whole point here is to show progress while it runs. The
+cost is that the low-level call reports failure as an `error` key in the
+stream instead of raising, so that has to be handled explicitly — see
+`_consume`.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 
 import docker
-from docker.errors import BuildError, DockerException
+from docker.errors import DockerException
 
 
 class BuildResult:
@@ -21,30 +29,71 @@ class BuildResult:
         self.log = log
 
 
-def build_image(context_dir: Path, tag: str) -> BuildResult:
+def _emit(log: list[str], on_log: Callable[[str], None] | None, line: str) -> None:
+    line = line.rstrip()
+    if not line:
+        return
+    log.append(line)
+    if on_log is not None:
+        on_log(line)
+
+
+def _consume(
+    stream, log: list[str], on_log: Callable[[str], None] | None
+) -> str | None:
+    """Drain the build stream, returning an error message or None.
+
+    `client.api.build` yields dicts as the daemon works: `stream` for
+    output, `error` when it fails. Unlike the high-level call it raises
+    nothing on a failed build, so a caller that ignores `error` would
+    treat a failure as a success.
+    """
+    error: str | None = None
+    for entry in stream:
+        if not isinstance(entry, dict):
+            continue
+        if "stream" in entry:
+            for line in str(entry["stream"]).splitlines():
+                _emit(log, on_log, line)
+        elif "error" in entry:
+            error = str(entry["error"])
+            _emit(log, on_log, error)
+        elif "status" in entry:  # layer pulls
+            progress = entry.get("progress") or ""
+            _emit(log, on_log, f"{entry['status']} {progress}".rstrip())
+    return error
+
+
+def build_image(
+    context_dir: Path,
+    tag: str,
+    on_log: Callable[[str], None] | None = None,
+) -> BuildResult:
+    """Build `context_dir` as `tag`.
+
+    `on_log` is called with each output line as it arrives, so a caller can
+    persist progress while the build runs. Omit it and this behaves as it
+    always did, returning the whole log at the end.
+    """
     log: list[str] = []
     try:
         client = docker.from_env()
     except DockerException as exc:
-        return BuildResult(
-            ok=False,
-            tag=tag,
-            log=[f"Could not reach the Docker daemon: {exc}"],
-        )
+        message = f"Could not reach the Docker daemon: {exc}"
+        _emit(log, on_log, message)
+        return BuildResult(ok=False, tag=tag, log=log)
 
     try:
-        _image, build_log = client.images.build(
-            path=str(context_dir), tag=tag, rm=True
+        stream = client.api.build(
+            path=str(context_dir), tag=tag, rm=True, decode=True
         )
-        for entry in build_log:
-            if "stream" in entry:
-                log.append(entry["stream"].rstrip())
-        return BuildResult(ok=True, tag=tag, log=log)
-    except BuildError as exc:
-        for entry in exc.build_log:
-            if "stream" in entry:
-                log.append(entry["stream"].rstrip())
-        log.append(f"Build failed: {exc}")
-        return BuildResult(ok=False, tag=tag, log=log)
+        error = _consume(stream, log, on_log)
     except DockerException as exc:
-        return BuildResult(ok=False, tag=tag, log=[f"Docker error: {exc}"])
+        _emit(log, on_log, f"Docker error: {exc}")
+        return BuildResult(ok=False, tag=tag, log=log)
+
+    if error:
+        _emit(log, on_log, "Build failed.")
+        return BuildResult(ok=False, tag=tag, log=log)
+
+    return BuildResult(ok=True, tag=tag, log=log)

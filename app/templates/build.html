@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block page_title %}Build{% endblock %}
+{% block page_subtitle %}{{ build.build_id }}{% endblock %}
+{% block content %}
+<div id="build-progress" data-progress-url="/builds/{{ build.build_id }}/progress">
+  {% include "_build_progress.html" %}
+</div>
+
+<a href="/" class="btn-link">&larr; back to Config Tuner</a>
+
+<script src="/static/build_progress.js"></script>
+{% endblock %}

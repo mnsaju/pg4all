@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main_module
-from app.builder import auth_store, credential_store, dockerfile_gen, smoke_test
+from app.builder import auth_store, build_store, credential_store, dockerfile_gen, smoke_test
 from app.builder.docker_build import BuildResult
 from app.builder.smoke_test import SmokeResult
 from app.core import auth
@@ -24,6 +24,19 @@ from app.core import auth
 _BUILD_ID_RE = re.compile(r"/credentials/([a-f0-9]{32})")
 
 CONSOLE_PASSWORD = "test-console-password"
+
+
+def _fake_build_image(ok: bool):
+    """Stands in for the real docker build. Must accept on_log, because
+    that is how the background build streams progress to build_store."""
+
+    def build(context_dir, tag, on_log=None):
+        line = "Successfully built" if ok else "Build failed"
+        if on_log is not None:
+            on_log(line)
+        return BuildResult(ok=ok, tag=tag, log=[line])
+
+    return build
 
 
 @pytest.fixture
@@ -50,7 +63,7 @@ def anonymous_client(tmp_path, monkeypatch):
     monkeypatch.setattr(
         main_module,
         "build_image",
-        lambda context_dir, tag: BuildResult(ok=True, tag=tag, log=["Successfully built"]),
+        _fake_build_image(ok=True),
     )
     # Without this the route boots a real container per test against the
     # real daemon — slow, and dependent on which images happen to exist on
@@ -250,7 +263,7 @@ def test_smoke_test_is_skipped_when_the_build_fails(client, monkeypatch):
     monkeypatch.setattr(
         main_module,
         "build_image",
-        lambda context_dir, tag: BuildResult(ok=False, tag=tag, log=["Build failed"]),
+        _fake_build_image(ok=False),
     )
 
     def _fail(tag, requested):
@@ -478,3 +491,100 @@ def test_every_route_is_protected_unless_explicitly_public(anonymous_client):
         assert resp.headers["location"] == "/login"
         checked += 1
     assert checked >= 5, "expected to have checked the real routes"
+
+
+# --- background builds ------------------------------------------------
+
+def test_build_redirects_to_its_own_page_instead_of_blocking(client):
+    """The POST used to hold the request open through docker build and the
+    smoke test. It now hands back a page to watch."""
+    resp = client.post(
+        "/build",
+        data={"pg_version": "17", "workload": "oltp", "tier": "medium"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert re.fullmatch(r"/builds/[a-f0-9]{32}", resp.headers["location"])
+
+
+def test_a_finished_build_page_shows_the_log_and_the_outcome(client):
+    resp = _submit_build(client)
+    assert resp.status_code == 200
+    assert 'data-state="succeeded"' in resp.text
+    assert "Successfully built" in resp.text     # streamed build log
+    assert "Smoke test passed" in resp.text
+    assert "Username: postgres" in resp.text
+
+
+def test_the_progress_fragment_matches_the_page(client):
+    resp = _submit_build(client)
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+
+    fragment = client.get(f"/builds/{build_id}/progress")
+    assert fragment.status_code == 200
+    assert 'data-state="succeeded"' in fragment.text
+    # The fragment is the live part only, not a whole document.
+    assert "<!doctype html>" not in fragment.text.lower()
+
+
+def test_a_running_build_reports_itself_as_running(client, monkeypatch, tmp_path):
+    """Nothing here mocks the build to completion, so the page has to show
+    the in-progress view rather than an empty result."""
+    build_dir = main_module.BUILD_OUTPUT_DIR / ("0" * 32)
+    build_store.start(
+        build_dir,
+        build_id="0" * 32,
+        image_tag="pg4all/postgres:17-oltp-medium",
+        pg_major="17",
+        pg_full_version="17.11",
+        findings=[],
+    )
+    build_store.append_log(build_dir, "Step 1/4 : FROM postgres:17-bookworm")
+
+    resp = client.get(f"/builds/{'0' * 32}")
+    assert resp.status_code == 200
+    assert 'data-state="running"' in resp.text
+    assert "Building image" in resp.text
+    assert "Step 1/4" in resp.text
+
+
+def test_a_failed_build_is_reported_without_a_smoke_test(client, monkeypatch):
+    monkeypatch.setattr(main_module, "build_image", _fake_build_image(ok=False))
+
+    def _fail(tag, requested):
+        raise AssertionError("smoke test must not run against a failed build")
+
+    monkeypatch.setattr(main_module, "run_smoke_test", _fail)
+
+    resp = _submit_build(client)
+    assert 'data-state="failed"' in resp.text
+    assert "Build failed" in resp.text
+    assert "Smoke test" not in resp.text
+
+
+def test_a_crash_during_the_build_does_not_leave_the_page_spinning(client, monkeypatch):
+    """Without the catch-all the record stays "running" forever and the
+    reason lives only in the server log."""
+    def _explode(context_dir, tag, on_log=None):
+        raise RuntimeError("daemon went away")
+
+    monkeypatch.setattr(main_module, "build_image", _explode)
+
+    resp = _submit_build(client)
+    assert 'data-state="failed"' in resp.text
+    assert "Build aborted" in resp.text
+    assert "daemon went away" in resp.text
+
+
+def test_an_unknown_build_id_is_404(client):
+    assert client.get("/builds/" + "f" * 32).status_code == 404
+    assert client.get(f"/builds/{'f' * 32}/progress").status_code == 404
+
+
+def test_the_builds_list_links_to_each_build_page(client):
+    resp = _submit_build(client)
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+
+    listing = client.get("/builds")
+    assert f'href="/builds/{build_id}"' in listing.text
+    assert "succeeded" in listing.text

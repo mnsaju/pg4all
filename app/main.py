@@ -1,15 +1,15 @@
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.concurrency import run_in_threadpool
 
-from app.builder import auth_store, compose_gen, credential_store, port_store
+from app.builder import auth_store, build_store, compose_gen, credential_store, port_store
 from app.builder.host_ports import published_host_ports
 from app.builder.dockerfile_gen import BUILD_OUTPUT_DIR, create_build_context
 from app.builder.docker_build import build_image
@@ -31,6 +31,14 @@ PUBLIC_PREFIXES = ("/static/",)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    interrupted = build_store.mark_interrupted_builds(BUILD_OUTPUT_DIR)
+    if interrupted:
+        print(
+            f"pg4all: marked {interrupted} build(s) as interrupted — the console "
+            "restarted while they were running.",
+            flush=True,
+        )
+
     password = auth_store.ensure_password()
     if password:
         print(
@@ -288,7 +296,7 @@ async def validate_settings(request: Request):
 
 
 @app.post("/build", response_class=HTMLResponse)
-async def build(request: Request):
+async def build(request: Request, background_tasks: BackgroundTasks):
     form = await request.form()
 
     version, wl, hw_tier = _resolve_selection(
@@ -361,20 +369,12 @@ async def build(request: Request):
         pgbackrest_conf=pgbackrest_conf,
     )
     tag = f"pg4all/postgres:{version.major}-{wl.key}-{hw_tier.key}"
-    # Both of these talk to the Docker daemon and block for minutes. In an
-    # async handler that would stall the event loop and freeze the console
-    # for every other request, so they run on a worker thread.
-    result = await run_in_threadpool(build_image, context_dir, tag)
-
-    # Only worth running against an image that exists. A failed smoke test
-    # never invalidates the build — the image is on the daemon either way,
-    # and the operator decides what to do about it.
-    smoke = (
-        await run_in_threadpool(run_smoke_test, tag, conf_values) if result.ok else None
-    )
-
     port_store.write_ports(context_dir, host_ports)
 
+    # The credential is generated and stored before the build starts, not
+    # after it finishes, so the build page can hand it over immediately
+    # rather than making the operator wait out a multi-minute build to see
+    # it. build_ok is corrected once the build actually lands.
     password = credentials.generate_password()
     record = credentials.CredentialRecord(
         build_id=build_id,
@@ -383,33 +383,160 @@ async def build(request: Request):
         image_tag=tag,
         pg_major=version.major,
         created_at=datetime.now(UTC).isoformat(),
-        build_ok=result.ok,
+        build_ok=False,
     )
     credential_store.save_credential(record)
 
-    if result.ok:
-        compose_gen.write_compose(
-            context_dir, tag, record.username, password, selected_services, host_ports
+    build_store.start(
+        context_dir,
+        build_id=build_id,
+        image_tag=tag,
+        pg_major=version.major,
+        pg_full_version=version.full_version,
+        findings=[_finding_to_dict(f) for f in findings],
+    )
+
+    # Runs after this response is sent. The function is sync, so FastAPI
+    # puts it on a worker thread and the event loop stays free.
+    background_tasks.add_task(
+        _run_build,
+        context_dir=context_dir,
+        tag=tag,
+        conf_values=conf_values,
+        selected_services=selected_services,
+        username=record.username,
+        password=password,
+        host_ports=host_ports,
+        record=record,
+    )
+
+    return RedirectResponse(f"/builds/{build_id}", status_code=303)
+
+
+def _run_build(
+    context_dir: Path,
+    tag: str,
+    conf_values: dict,
+    selected_services: list,
+    username: str,
+    password: str,
+    host_ports: dict[str, int],
+    record: credentials.CredentialRecord,
+) -> None:
+    """The whole build, off the request. Progress goes to build_store as it
+    happens; nothing here talks back to the browser."""
+    try:
+        result = build_image(
+            context_dir,
+            tag,
+            on_log=lambda line: build_store.append_log(context_dir, line),
         )
 
-    return templates.TemplateResponse(
-        request,
-        "result.html",
-        {
-            "result": result,
-            "pg_version": version,
-            "credential": record,
-            "findings": findings,
-            "smoke": smoke,
-            **_build_dir_flags(context_dir),
-        },
-    )
+        # CredentialRecord is frozen, so this is a new record written over
+        # the placeholder saved before the build started.
+        credential_store.save_credential(replace(record, build_ok=result.ok))
+
+        if not result.ok:
+            build_store.finish(context_dir, build_store.FAILED, build_ok=False)
+            return
+
+        compose_gen.write_compose(
+            context_dir, tag, username, password, selected_services, host_ports
+        )
+
+        build_store.set_stage(context_dir, build_store.STAGE_SMOKE_TESTING)
+        build_store.append_log(context_dir, ["", "--- smoke test ---"])
+        smoke = run_smoke_test(tag, conf_values)
+        build_store.append_log(context_dir, smoke.log)
+
+        # The image built, so the build succeeded. A failed smoke test is
+        # reported beside it, not folded into it — the image is on the
+        # daemon either way.
+        build_store.finish(
+            context_dir,
+            build_store.SUCCEEDED,
+            build_ok=True,
+            smoke=_smoke_to_dict(smoke),
+        )
+    except Exception as exc:  # noqa: BLE001 - nothing above us to catch this
+        # Without this a crash leaves the record stuck on "running" and the
+        # page polling forever, with the reason only in the server log.
+        build_store.append_log(context_dir, f"[pg4all] Build aborted: {exc!r}")
+        build_store.finish(context_dir, build_store.FAILED, build_ok=False)
+
+
+def _finding_to_dict(finding) -> dict:
+    return {
+        "level": finding.level,
+        "summary": finding.summary,
+        "detail": finding.detail,
+        "parameter_keys": list(finding.parameter_keys),
+    }
+
+
+def _smoke_to_dict(smoke) -> dict:
+    return {
+        "status": smoke.status,
+        "summary": smoke.summary,
+        "comparisons": [
+            {
+                "key": c.key,
+                "requested_display": c.requested_display,
+                "applied_display": c.applied_display,
+                "matches": c.matches,
+            }
+            for c in smoke.comparisons
+        ],
+    }
+
+
+def _build_page_context(build_id: str) -> dict | None:
+    build_dir = BUILD_OUTPUT_DIR / build_id
+    build = build_store.load(build_dir)
+    if build is None:
+        return None
+    return {
+        "build": build,
+        "log": build_store.read_log(build_dir),
+        "credential": credential_store.load_credential(build_id),
+        "findings": build.findings,
+        "smoke": build.smoke,
+        **_build_dir_flags(build_dir),
+    }
+
+
+@app.get("/builds/{build_id}", response_class=HTMLResponse)
+def show_build(request: Request, build_id: str):
+    context = _build_page_context(build_id)
+    if context is None:
+        return templates.TemplateResponse(
+            request, "credential_not_found.html", {"build_id": build_id}, status_code=404
+        )
+    return templates.TemplateResponse(request, "build.html", context)
+
+
+@app.get("/builds/{build_id}/progress", response_class=HTMLResponse)
+def build_progress(request: Request, build_id: str):
+    """The live part of the build page, re-rendered for polling.
+
+    Same template fragment the full page uses, so the running view and the
+    finished view can't drift apart."""
+    context = _build_page_context(build_id)
+    if context is None:
+        return HTMLResponse("", status_code=404)
+    return templates.TemplateResponse(request, "_build_progress.html", context)
 
 
 @app.get("/builds", response_class=HTMLResponse)
 def list_builds(request: Request):
     records = credential_store.list_credentials()
-    return templates.TemplateResponse(request, "builds.html", {"records": records})
+    states = {}
+    for credential in records:
+        build = build_store.load(BUILD_OUTPUT_DIR / credential.build_id)
+        states[credential.build_id] = build.state if build else None
+    return templates.TemplateResponse(
+        request, "builds.html", {"records": records, "states": states}
+    )
 
 
 @app.get("/credentials/{build_id}", response_class=HTMLResponse)

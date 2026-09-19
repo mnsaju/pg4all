@@ -1,0 +1,71 @@
+{# Everything about a build that changes as it runs. Rendered inside
+   build.html on first load and re-fetched by build_progress.js while the
+   build is running, so there is one definition of both views. #}
+<div class="build-live" data-state="{{ build.state }}">
+
+  {% if build.state == 'running' %}
+  <div class="status-banner running">
+    <span class="spinner" aria-hidden="true"></span>
+    {{ build.stage }}&hellip;
+  </div>
+  {% elif build.state == 'succeeded' %}
+  <div class="status-banner ok">Build succeeded</div>
+  {% elif build.state == 'interrupted' %}
+  <div class="status-banner warn">Build interrupted</div>
+  {% else %}
+  <div class="status-banner error">Build failed</div>
+  {% endif %}
+
+  <p class="field-hint">
+    PostgreSQL {{ build.pg_full_version }} &middot; image tag
+    <code>{{ build.image_tag }}</code>
+  </p>
+
+  <div class="log-panel log-panel-scroll" id="build-log">{{ log }}</div>
+
+  {% if build.smoke %}
+  <h2 class="category-heading">Smoke test</h2>
+  <div class="status-banner {{ 'ok' if build.smoke.status == 'passed' else ('error' if build.smoke.status == 'failed' else 'warn') }}">
+    Smoke test {{ build.smoke.status }}
+  </div>
+  <p class="field-hint">{{ build.smoke.summary }}</p>
+
+  {% if build.smoke.comparisons %}
+  <table class="builds-table">
+    <thead>
+      <tr><th>Parameter</th><th>Requested</th><th>Applied</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for row in build.smoke.comparisons %}
+      <tr class="{{ '' if row.matches else 'row-mismatch' }}">
+        <td><code>{{ row.key }}</code></td>
+        <td>{{ row.requested_display }}</td>
+        <td>{{ row.applied_display }}</td>
+        <td>{% if not row.matches %}<span class="badge badge-finding-error">differs</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% endif %}
+
+  {% if credential %}
+  {% include "_credentials.html" %}
+  {% include "_compose_instructions.html" %}
+  {% endif %}
+
+  {% if findings %}
+  <h2 class="category-heading">Configuration check</h2>
+  <p class="field-hint">
+    {% if build.is_terminal %}
+    The image was built with these outstanding — they describe runtime
+    behaviour, not build failures.
+    {% else %}
+    Outstanding for this build — they describe runtime behaviour, not build
+    failures.
+    {% endif %}
+  </p>
+  {% include "_findings.html" %}
+  {% endif %}
+
+</div>

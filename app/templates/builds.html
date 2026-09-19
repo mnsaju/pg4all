@@ -20,11 +20,20 @@
       <td><code>{{ record.image_tag }}</code></td>
       <td>{{ record.pg_major }}</td>
       <td>
+        {% set state = states.get(record.build_id) %}
+        {% if state %}
+        <span class="state-pill state-{{ state }}">{{ state }}</span>
+        {% else %}
+        {# Predates the build-status record; fall back to what the
+           credential itself remembers. #}
         <span class="badge {{ 'badge-risk-low' if record.build_ok else 'badge-risk-high' }}">
           {{ 'ok' if record.build_ok else 'failed' }}
         </span>
+        {% endif %}
       </td>
-      <td><a href="/credentials/{{ record.build_id }}" class="btn-link">credentials &rarr;</a></td>
+      <td>
+        <a href="/builds/{{ record.build_id }}" class="btn-link">open &rarr;</a>
+      </td>
     </tr>
     {% endfor %}
   </tbody>
