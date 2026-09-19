@@ -9,6 +9,7 @@ to tmp_path, same pattern tests/test_credentials.py already uses for
 credential_store).
 """
 
+import json
 import re
 import time
 
@@ -588,3 +589,76 @@ def test_the_builds_list_links_to_each_build_page(client):
     listing = client.get("/builds")
     assert f'href="/builds/{build_id}"' in listing.text
     assert "succeeded" in listing.text
+
+
+# --- monitoring stack --------------------------------------------------
+
+def test_a_monitoring_build_writes_prometheus_and_grafana_config(client):
+    resp = _submit_build(client, services=["grafana"])
+    assert resp.status_code == 200
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+    build_dir = main_module.BUILD_OUTPUT_DIR / build_id
+
+    for relative in (
+        "monitoring/prometheus.yml",
+        "monitoring/grafana/provisioning/datasources/prometheus.yml",
+        "monitoring/grafana/provisioning/dashboards/pg4all.yml",
+        "monitoring/grafana/dashboards/pg4all.json",
+    ):
+        assert (build_dir / relative).exists(), relative
+
+
+def test_a_build_without_monitoring_writes_none_of_it(client):
+    resp = _submit_build(client, services=["pgbouncer"])
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+    assert not (main_module.BUILD_OUTPUT_DIR / build_id / "monitoring").exists()
+
+
+def test_monitoring_config_is_not_uploaded_as_docker_build_context(client, monkeypatch):
+    """Everything in the build directory at build time is sent to the
+    daemon. Monitoring config isn't part of the image, so it must be
+    written only after the build has run."""
+    seen = {}
+
+    def _capture(context_dir, tag, on_log=None):
+        seen["monitoring_present"] = (context_dir / "monitoring").exists()
+        return BuildResult(ok=True, tag=tag, log=["Successfully built"])
+
+    monkeypatch.setattr(main_module, "build_image", _capture)
+    _submit_build(client, services=["grafana"])
+    assert seen["monitoring_present"] is False
+
+
+def test_the_generated_dashboard_carries_this_builds_max_connections(client):
+    """End to end: the number chosen in the tuner reaches the dashboard on
+    disk as the connections panel's ceiling."""
+    resp = _submit_build(client, services=["grafana"], p_max_connections="250")
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+
+    dashboard = json.loads(
+        (
+            main_module.BUILD_OUTPUT_DIR
+            / build_id
+            / "monitoring/grafana/dashboards/pg4all.json"
+        ).read_text()
+    )
+    panel = next(p for p in dashboard["panels"] if p["title"] == "Connections by state")
+    steps = panel["fieldConfig"]["defaults"]["thresholds"]["steps"]
+    assert steps[-1]["value"] == 250
+
+
+def test_selecting_grafana_brings_prometheus_and_the_exporter_into_the_compose(client):
+    resp = _submit_build(client, services=["grafana"])
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+    compose = (main_module.BUILD_OUTPUT_DIR / build_id / "docker-compose.yml").read_text()
+
+    assert "  postgres_exporter:" in compose
+    assert "  prometheus:" in compose
+    assert "  grafana:" in compose
+
+
+def test_the_result_page_explains_how_to_reach_grafana(client):
+    resp = _submit_build(client, services=["grafana"], port_grafana="13000")
+    assert "ssh -L 13000:127.0.0.1:13000" in resp.text
+    assert "Grafana login: admin" in resp.text
+    assert "down -v" in resp.text  # the volume warning

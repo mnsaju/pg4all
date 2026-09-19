@@ -12,11 +12,12 @@ whatever the host maps it to) and the sidecars reach Postgres over the
 compose network by service name on 5432, so none of that is affected by
 what a port is published as.
 
-pgAdmin's `127.0.0.1` bind is deliberately not configurable here. Its
-port can move, but the interface it binds to stays loopback-only: making
-"expose the admin UI to the whole network" a number in a form is the kind
-of choice that should take more than editing a field, and the SSH tunnel
-it forces is what keeps that UI off the network in the first place.
+The `127.0.0.1` bind on the three web UIs — pgAdmin, Grafana and
+Prometheus — is deliberately not configurable here. Their ports can move,
+but the interface they bind to stays loopback-only: making "expose this to
+the whole network" a number in a form is the kind of choice that should
+take more than editing a field, and the SSH tunnel it forces is what keeps
+them off the network in the first place.
 """
 
 from dataclasses import dataclass
@@ -65,6 +66,19 @@ PORT_SPECS: list[PortSpec] = [
     PortSpec(
         "pgadmin", "pgAdmin", default=5050, container_port=80,
         bind_address="127.0.0.1", service_key="pgadmin",
+    ),
+    # Both monitoring UIs are loopback-only for the same reason pgAdmin is,
+    # and Prometheus more urgently: it has no authentication at all, and its
+    # UI serves every metric plus its own running config to anyone who can
+    # reach it. Published rather than hidden entirely because "is the target
+    # up?" is the first question when a dashboard comes up empty.
+    PortSpec(
+        "prometheus", "Prometheus", default=9090, container_port=9090,
+        bind_address="127.0.0.1", service_key="prometheus",
+    ),
+    PortSpec(
+        "grafana", "Grafana", default=3000, container_port=3000,
+        bind_address="127.0.0.1", service_key="grafana",
     ),
 ]
 

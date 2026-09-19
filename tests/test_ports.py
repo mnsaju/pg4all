@@ -13,6 +13,8 @@ def test_defaults_match_the_conventional_ports():
         "pgbouncer": 6432,
         "postgres_exporter": 9187,
         "pgadmin": 5050,
+        "prometheus": 9090,
+        "grafana": 3000,
     }
 
 
@@ -26,6 +28,13 @@ def test_pgadmin_keeps_its_loopback_bind_at_any_port():
     interface should take more than typing a number into a form."""
     assert ports.get("pgadmin").published(5050) == "127.0.0.1:5050:80"
     assert ports.get("pgadmin").published(9999) == "127.0.0.1:9999:80"
+
+
+def test_every_web_ui_stays_loopback_bound_at_any_port():
+    """Three UIs are reachable over HTTP and none should ever be on the
+    network. Prometheus most of all: it has no authentication at all."""
+    for key in ("pgadmin", "grafana", "prometheus"):
+        assert ports.get(key).published(12345).startswith("127.0.0.1:"), key
 
 
 def test_only_selected_services_have_a_published_port():

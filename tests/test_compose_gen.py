@@ -76,3 +76,34 @@ def test_omitting_host_ports_keeps_the_conventional_defaults():
     )
     assert '"5432:5432"' in text
     assert '"6432:5432"' in text
+
+
+def test_named_volumes_are_declared_at_the_top_level():
+    """Compose rejects a file that references a named volume without
+    declaring it."""
+    text = compose_gen.render_compose(
+        "pg4all/postgres:17-oltp-medium", "postgres", "secret",
+        services.resolve(["grafana"]),
+    )
+    assert "\nvolumes:\n" in text
+    assert "  prometheus_data:\n" in text
+    assert "  grafana_data:\n" in text
+
+
+def test_no_volumes_block_when_nothing_needs_one():
+    text = compose_gen.render_compose(
+        "pg4all/postgres:17-oltp-medium", "postgres", "secret",
+        services.resolve(["pgbouncer"]),
+    )
+    assert "\nvolumes:\n" not in text
+
+
+def test_monitoring_config_is_bind_mounted_from_the_build_directory():
+    """Relative paths resolve against the compose file's own directory,
+    which is the build directory the instructions tell you to cd into."""
+    text = compose_gen.render_compose(
+        "pg4all/postgres:17-oltp-medium", "postgres", "secret",
+        services.resolve(["grafana"]),
+    )
+    assert "./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro" in text
+    assert "./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro" in text

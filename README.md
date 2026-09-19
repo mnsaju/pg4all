@@ -72,7 +72,24 @@ with the resulting `postgresql.conf` baked in.
   for — then removes the container and its volume in a `finally`, on every
   path. A failure never invalidates the build: the image is on the daemon
   either way, and you decide what to do about it.
-- Optionally include companion services alongside the build (`app/core/services.py`):
+- Optionally include a monitoring stack (`app/core/monitoring.py`): Prometheus
+  to scrape and store, Grafana to display, and one dashboard generated from
+  *this build's own tuning values* — connections plotted against the
+  `max_connections` it chose, checkpoints against its `max_wal_size`. Ticking
+  Grafana pulls in Prometheus and the exporter automatically, since a dashboard
+  with nothing scraping is empty. Nine panels, all built from metrics the
+  exporter really publishes — verified against a running stack in
+  `tests/test_monitoring_stack.py`, which pulls every metric name out of the
+  generated dashboard and asks a live Prometheus whether it has data. That test
+  earned itself immediately: PostgreSQL 17 moved the checkpoint counters from
+  `pg_stat_bgwriter` to a new `pg_stat_checkpointer` view, so the flagship
+  checkpoint panel was silently empty on 17 and 18. The dashboard now picks the
+  metric names for the major it built, and the exporter runs with
+  `--collector.stat_checkpointer` (off by default, inert on 16).
+  Both UIs are loopback-bound like pgAdmin; Prometheus especially, since it has
+  no authentication at all. Metrics live in named volumes and Prometheus keeps
+  15 days or 2 GB, whichever comes first.
+- Optionally include other companion services alongside the build (`app/core/services.py`):
   PgBouncer, a Prometheus `postgres_exporter`, and pgAdmin, each generated as
   a sidecar container in a per-build `docker-compose.yml`; and pgBackRest,
   installed as a package inside the Postgres image itself (it needs direct

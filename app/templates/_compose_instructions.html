@@ -1,6 +1,7 @@
 {# Included after _credentials.html in result.html and credential.html.
    Expects `credential` (for build_id) plus `has_compose`/`has_pgbackrest`/
-   `has_pgadmin`/`pgadmin_email`/`host_ports` — computed by checking
+   `has_pgadmin`/`has_grafana`/`pgadmin_email`/`grafana_user`/`host_ports` —
+   computed by checking
    build_output/<build_id>/ on disk, not stored on the credential record,
    since the build artifacts themselves are just as durable as the encrypted
    credential store. `host_ports` comes from the build's ports.json, so a
@@ -31,6 +32,31 @@ pgAdmin password: (same as the superuser password above)</div>
   <code>postgres</code>, port 5432, same username/password. That's the
   container-side port on the compose network, which doesn't change when you
   move the published host port. pg4all doesn't pre-seed it.
+</p>
+{% endif %}
+
+{% if has_grafana %}
+<p class="field-hint">
+  Grafana is bound to <code>127.0.0.1</code> only on port
+  {{ host_ports['grafana'] }}, like pgAdmin — reach it over an SSH tunnel:
+</p>
+<div class="log-panel">ssh -L {{ host_ports['grafana'] }}:127.0.0.1:{{ host_ports['grafana'] }} &lt;host&gt;
+# then open http://localhost:{{ host_ports['grafana'] }}
+
+Grafana login: {{ grafana_user }}
+Grafana password: (same as the superuser password above)</div>
+<p class="field-hint">
+  The &ldquo;pg4all — PostgreSQL&rdquo; dashboard is already provisioned, with
+  this build's own tuning values in it: connections are plotted against the
+  <code>max_connections</code> you chose, checkpoints against your
+  <code>max_wal_size</code>. Prometheus is on
+  {{ host_ports['prometheus'] }}, also loopback-only — tunnel to it the same
+  way if a panel is empty and you want to check the scrape target is up.
+</p>
+<p class="field-hint">
+  Metrics live in a named volume. <code>docker compose down</code> keeps
+  them; <code>docker compose down -v</code> deletes the history along with
+  the database. Prometheus keeps 15 days or 2&nbsp;GB, whichever comes first.
 </p>
 {% endif %}
 

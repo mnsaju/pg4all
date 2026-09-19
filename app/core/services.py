@@ -28,6 +28,11 @@ from dataclasses import dataclass
 # off, and fails silently into a restart loop rather than a clear error.
 PGADMIN_EMAIL = "admin@pg4all.dev"
 
+# Grafana's built-in admin. Like pgAdmin's login, the username isn't the
+# secret — the password is, and it reuses the build's superuser password
+# rather than generating a second credential to track and hand over.
+GRAFANA_ADMIN_USER = "admin"
+
 
 @dataclass(frozen=True)
 class ServiceSpec:
@@ -39,6 +44,14 @@ class ServiceSpec:
     apt_package: str | None  # only set when mode == "apt"
     risk: str  # "low" | "medium" — same vocabulary as extensions.py
     default_selected: bool
+    # Services this one cannot work without. Grafana can't scrape, so it
+    # needs Prometheus, which needs something to scrape — ticking one box
+    # brings the whole chain rather than silently producing a dashboard
+    # wired to nothing.
+    requires: tuple[str, ...] = ()
+    # Named volumes this service needs declared at the top of the compose
+    # file. Only monitoring has state worth keeping so far.
+    named_volumes: tuple[str, ...] = ()
 
 
 SERVICES: list[ServiceSpec] = [
@@ -71,6 +84,33 @@ SERVICES: list[ServiceSpec] = [
         "instance with the same superuser credential.",
         mode="sidecar", image="quay.io/prometheuscommunity/postgres-exporter:v0.20.1",
         apt_package=None, risk="low", default_selected=False,
+    ),
+    ServiceSpec(
+        "prometheus", "Prometheus",
+        "Scrapes the metrics exporter and stores them as a time series, so "
+        "there is history to look at rather than only the current value. "
+        "Published on 127.0.0.1 only — it has no authentication whatsoever "
+        "and its UI exposes every metric and its own running config, so the "
+        "loopback bind is the only thing protecting it. Retains 15 days or "
+        "2 GB, whichever comes first.",
+        mode="sidecar", image="prom/prometheus:v3.14.0", apt_package=None,
+        risk="low", default_selected=False,
+        requires=("postgres_exporter",),
+        named_volumes=("prometheus_data",),
+    ),
+    ServiceSpec(
+        "grafana", "Grafana dashboard",
+        "Dashboards over the Prometheus data, with one dashboard generated "
+        "from this build's own tuning values — connections plotted against "
+        "the max_connections it chose, checkpoints against its max_wal_size. "
+        "Selecting this also brings Prometheus and the metrics exporter, "
+        "since a dashboard with nothing scraping is empty. Bound to "
+        "127.0.0.1 only, like pgAdmin; reach it over an SSH tunnel. Logs in "
+        "as admin with this build's superuser password.",
+        mode="sidecar", image="grafana/grafana:13.2.2", apt_package=None,
+        risk="medium", default_selected=False,
+        requires=("postgres_exporter", "prometheus"),
+        named_volumes=("grafana_data",),
     ),
     ServiceSpec(
         "pgadmin", "pgAdmin",
@@ -106,9 +146,34 @@ def get(key: str) -> ServiceSpec:
 def resolve(keys: list[str]) -> list[ServiceSpec]:
     """Validates a raw list of service keys (e.g. from a submitted form),
     silently dropping anything unrecognized — same defensive pattern as
-    extensions.resolve()."""
-    seen = dict.fromkeys(keys)  # de-dupe, preserve order
-    return [_BY_KEY[k] for k in seen if k in _BY_KEY]
+    extensions.resolve() — and pulling in anything the selection requires.
+
+    Dependencies come first in the result, so the compose file lists a
+    service after the ones it depends on. That's cosmetic (depends_on does
+    the real ordering) but makes the generated file read in the order
+    things actually start.
+    """
+    ordered: dict[str, None] = {}
+
+    def add(key: str, seen: frozenset[str]) -> None:
+        if key not in _BY_KEY or key in ordered or key in seen:
+            return
+        for required in _BY_KEY[key].requires:
+            add(required, seen | {key})
+        ordered[key] = None
+
+    for key in keys:
+        add(key, frozenset())
+    return [_BY_KEY[k] for k in ordered]
+
+
+def named_volumes(selected: list[ServiceSpec]) -> list[str]:
+    """Every named volume the selection needs, de-duplicated, in order."""
+    volumes: dict[str, None] = {}
+    for spec in selected:
+        for volume in spec.named_volumes:
+            volumes[volume] = None
+    return list(volumes)
 
 
 def apt_packages(selected: list[ServiceSpec]) -> list[str]:
@@ -167,6 +232,14 @@ def _postgres_exporter_fragment(
         f"      DATA_SOURCE_URI: \"postgres:5432/postgres?sslmode=disable\"\n"
         f"      DATA_SOURCE_USER: {username}\n"
         f"      DATA_SOURCE_PASS: '{password}'\n"
+        # PostgreSQL 17 moved the checkpoint counters out of pg_stat_bgwriter
+        # into the new pg_stat_checkpointer view, and this collector — which
+        # reads that view — is off by default. Without it, the dashboard's
+        # checkpoint panel is silently empty on 17 and 18. The flag is inert
+        # on 16, where the view doesn't exist and the old bgwriter metrics
+        # are still published, so it's passed unconditionally.
+        f"    command:\n"
+        f"      - \"--collector.stat_checkpointer\"\n"
         f"    ports:\n"
         f"      - \"{published}\"\n"
         f"    depends_on:\n"
@@ -192,10 +265,66 @@ def _pgadmin_fragment(
     )
 
 
+def _prometheus_fragment(
+    spec: ServiceSpec, username: str, password: str, published: str
+) -> str:
+    # No credentials: Prometheus has no authentication to configure. The
+    # loopback bind in `published` is the whole access story.
+    return (
+        f"  {spec.key}:\n"
+        f"    image: {spec.image}\n"
+        # Overriding `command` drops the image's own defaults, so the config
+        # path and storage path have to be restated alongside the retention
+        # limits — omitting them leaves Prometheus looking in the wrong place.
+        f"    command:\n"
+        f"      - \"--config.file=/etc/prometheus/prometheus.yml\"\n"
+        f"      - \"--storage.tsdb.path=/prometheus\"\n"
+        f"      - \"--storage.tsdb.retention.time=15d\"\n"
+        f"      - \"--storage.tsdb.retention.size=2GB\"\n"
+        f"    volumes:\n"
+        f"      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro\n"
+        f"      - prometheus_data:/prometheus\n"
+        f"    ports:\n"
+        f"      - \"{published}\"\n"
+        f"    depends_on:\n"
+        f"      - postgres_exporter\n"
+        f"    restart: unless-stopped\n"
+    )
+
+
+def _grafana_fragment(
+    spec: ServiceSpec, username: str, password: str, published: str
+) -> str:
+    return (
+        f"  {spec.key}:\n"
+        f"    image: {spec.image}\n"
+        f"    environment:\n"
+        f"      GF_SECURITY_ADMIN_USER: {GRAFANA_ADMIN_USER}\n"
+        f"      GF_SECURITY_ADMIN_PASSWORD: '{password}'\n"
+        f"      GF_USERS_ALLOW_SIGN_UP: \"false\"\n"
+        f"      GF_AUTH_ANONYMOUS_ENABLED: \"false\"\n"
+        f"    volumes:\n"
+        # Provisioning and dashboards are read-only bind mounts; only
+        # Grafana's own database lives in the named volume. Keeping the
+        # dashboards out of /var/lib/grafana avoids nesting a bind mount
+        # inside a volume, which works but reads as an accident.
+        f"      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro\n"
+        f"      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro\n"
+        f"      - grafana_data:/var/lib/grafana\n"
+        f"    ports:\n"
+        f"      - \"{published}\"\n"
+        f"    depends_on:\n"
+        f"      - prometheus\n"
+        f"    restart: unless-stopped\n"
+    )
+
+
 _FRAGMENT_BUILDERS = {
     "pgbouncer": _pgbouncer_fragment,
     "postgres_exporter": _postgres_exporter_fragment,
     "pgadmin": _pgadmin_fragment,
+    "prometheus": _prometheus_fragment,
+    "grafana": _grafana_fragment,
 }
 
 

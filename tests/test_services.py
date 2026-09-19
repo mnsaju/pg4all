@@ -74,3 +74,74 @@ def test_compose_fragment_pgadmin_reuses_postgres_password_as_its_own():
     )
     assert f"PGADMIN_DEFAULT_EMAIL: {services.PGADMIN_EMAIL}" in fragment
     assert "PGADMIN_DEFAULT_PASSWORD: 's3cret'" in fragment
+
+
+def test_selecting_grafana_pulls_in_what_it_cannot_work_without():
+    """Grafana can't scrape; Prometheus needs something to scrape. Ticking
+    one box has to bring the chain or the dashboard is wired to nothing."""
+    assert [s.key for s in services.resolve(["grafana"])] == [
+        "postgres_exporter", "prometheus", "grafana"
+    ]
+
+
+def test_selecting_prometheus_pulls_in_the_exporter():
+    assert [s.key for s in services.resolve(["prometheus"])] == [
+        "postgres_exporter", "prometheus"
+    ]
+
+
+def test_selecting_the_whole_chain_explicitly_does_not_duplicate_it():
+    assert [s.key for s in services.resolve(["postgres_exporter", "prometheus", "grafana"])] == [
+        "postgres_exporter", "prometheus", "grafana"
+    ]
+
+
+def test_dependencies_come_before_the_service_that_needs_them():
+    """Cosmetic — depends_on does the real ordering — but the generated
+    compose should read in the order things start."""
+    keys = [s.key for s in services.resolve(["grafana", "pgbouncer"])]
+    assert keys.index("prometheus") < keys.index("grafana")
+    assert keys.index("postgres_exporter") < keys.index("prometheus")
+
+
+def test_named_volumes_are_collected_without_duplicates():
+    assert services.named_volumes(services.resolve(["grafana"])) == [
+        "prometheus_data", "grafana_data"
+    ]
+    assert services.named_volumes(services.resolve(["pgbouncer"])) == []
+
+
+def test_prometheus_restates_the_defaults_it_overrides():
+    """Overriding `command` drops the image's own defaults, so the config
+    and storage paths have to be repeated alongside the retention flags."""
+    spec = services.get("prometheus")
+    fragment = services.compose_fragment(
+        spec, "postgres", "s3cret", ports.get("prometheus").published(9090)
+    )
+    assert "--config.file=/etc/prometheus/prometheus.yml" in fragment
+    assert "--storage.tsdb.path=/prometheus" in fragment
+    assert "--storage.tsdb.retention.time=15d" in fragment
+    assert "--storage.tsdb.retention.size=2GB" in fragment
+
+
+def test_grafana_reuses_the_build_password_and_disables_sign_up():
+    spec = services.get("grafana")
+    fragment = services.compose_fragment(
+        spec, "postgres", "s3cret", ports.get("grafana").published(3000)
+    )
+    assert f"GF_SECURITY_ADMIN_USER: {services.GRAFANA_ADMIN_USER}" in fragment
+    assert "GF_SECURITY_ADMIN_PASSWORD: 's3cret'" in fragment
+    assert 'GF_USERS_ALLOW_SIGN_UP: "false"' in fragment
+    assert '"127.0.0.1:3000:3000"' in fragment
+
+
+def test_grafana_dashboards_are_not_mounted_inside_its_data_volume():
+    """A read-only bind mount nested inside a named volume works, but reads
+    as an accident; the provisioned files live outside /var/lib/grafana."""
+    fragment = services.compose_fragment(
+        services.get("grafana"), "postgres", "pw",
+        ports.get("grafana").published(3000),
+    )
+    assert "/etc/grafana/dashboards:ro" in fragment
+    assert "grafana_data:/var/lib/grafana\n" in fragment
+    assert "/var/lib/grafana/dashboards" not in fragment

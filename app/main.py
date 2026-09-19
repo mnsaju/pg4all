@@ -9,14 +9,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.builder import auth_store, build_store, compose_gen, credential_store, port_store
+from app.builder import (
+    auth_store, build_store, compose_gen, credential_store, monitoring_gen, port_store,
+)
 from app.builder.host_ports import published_host_ports
 from app.builder.dockerfile_gen import BUILD_OUTPUT_DIR, create_build_context
 from app.builder.docker_build import build_image
 from app.builder.smoke_test import run_smoke_test
 from app.core import (
-    auth, credentials, extensions, hardware, parameters, pg_versions, ports, services,
-    validation, workloads,
+    auth, credentials, extensions, hardware, monitoring, parameters, pg_versions, ports,
+    services, validation, workloads,
 )
 from app.core.conf_generator import render_conf
 
@@ -161,7 +163,9 @@ def _build_dir_flags(build_dir: Path) -> dict:
         "has_compose": bool(compose_text),
         "has_pgbackrest": (build_dir / "pgbackrest.conf").exists(),
         "has_pgadmin": "pgadmin:" in compose_text,
+        "has_grafana": "grafana:" in compose_text,
         "pgadmin_email": services.PGADMIN_EMAIL,
+        "grafana_user": services.GRAFANA_ADMIN_USER,
         "host_ports": port_store.read_ports(build_dir),
     }
 
@@ -402,6 +406,7 @@ async def build(request: Request, background_tasks: BackgroundTasks):
         _run_build,
         context_dir=context_dir,
         tag=tag,
+        pg_major=version.major,
         conf_values=conf_values,
         selected_services=selected_services,
         username=record.username,
@@ -416,6 +421,7 @@ async def build(request: Request, background_tasks: BackgroundTasks):
 def _run_build(
     context_dir: Path,
     tag: str,
+    pg_major: str,
     conf_values: dict,
     selected_services: list,
     username: str,
@@ -443,6 +449,12 @@ def _run_build(
         compose_gen.write_compose(
             context_dir, tag, username, password, selected_services, host_ports
         )
+
+        # Written here rather than into the build context: everything in the
+        # build directory at build time is uploaded to the daemon, and none
+        # of this belongs in the image.
+        if monitoring.is_selected(s.key for s in selected_services):
+            monitoring_gen.write_monitoring_files(context_dir, conf_values, pg_major)
 
         build_store.set_stage(context_dir, build_store.STAGE_SMOKE_TESTING)
         build_store.append_log(context_dir, ["", "--- smoke test ---"])

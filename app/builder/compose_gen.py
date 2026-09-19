@@ -13,7 +13,7 @@ has already pushed that image into the host daemon's store via the SDK.
 from pathlib import Path
 
 from app.core import ports
-from app.core.services import ServiceSpec, compose_fragment
+from app.core.services import ServiceSpec, compose_fragment, named_volumes
 
 _POSTGRES_SERVICE_TEMPLATE = """\
 services:
@@ -54,6 +54,14 @@ def render_compose(
         text += "\n" + compose_fragment(
             spec, username, password, port_spec.published(host_ports[spec.key])
         )
+
+    # Named volumes have to be declared at the top level as well as
+    # referenced by the services using them, or compose rejects the file.
+    volumes = named_volumes(sidecars)
+    if volumes:
+        text += "\nvolumes:\n"
+        text += "".join(f"  {volume}:\n" for volume in volumes)
+
     return text
 
 
