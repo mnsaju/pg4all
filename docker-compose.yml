@@ -6,7 +6,17 @@ services:
     image: pg4all-console
     container_name: pg4all-console
     ports:
-      - "${PG4ALL_PORT:-8000}:8000"
+      # Loopback-only by default. The console mounts the host's Docker
+      # socket, so reaching it is equivalent to root on this host, and it
+      # has no authentication: /builds lists every build and
+      # /credentials/<id> returns that build's superuser password in
+      # cleartext to anyone who asks. Reach it over an SSH tunnel, the same
+      # way pgAdmin is reached (see README).
+      #
+      # Overriding this publishes all of the above to the network. It takes
+      # an explicit PG4ALL_BIND=0.0.0.0 precisely so it can't happen by
+      # default or by accident.
+      - "${PG4ALL_BIND:-127.0.0.1}:${PG4ALL_PORT:-8000}:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./build_output:/app/build_output

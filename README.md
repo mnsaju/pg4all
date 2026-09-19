@@ -116,8 +116,18 @@ host the console runs on. Both directories are gitignored.
   to it via the `docker` Python SDK — no `docker` CLI binary needed inside
   the console image.
 
-  **This means the console has host-root-equivalent access.** Do not
-  expose it beyond a trusted operator until there's an actual auth story.
+  **This means the console has host-root-equivalent access**, and it has
+  no authentication of any kind: `/builds` lists every build made and
+  `/credentials/<build_id>` returns that build's Postgres superuser
+  password in cleartext, to anyone who can reach the port. Encrypting the
+  credential store at rest protects it from backups, screenshots and
+  accidental commits — not from the web UI handing it out.
+
+  So the console binds to `127.0.0.1` only, and is reached over an SSH
+  tunnel, exactly like pgAdmin. The console is the more dangerous of the
+  two, so it gets at least the same treatment. Overriding that bind takes
+  a deliberate `PG4ALL_BIND=0.0.0.0`; don't, until there's an actual auth
+  story.
 
 ## Run locally (no Docker)
 
@@ -137,8 +147,20 @@ docker compose up --build -d
 ```
 
 `docker-compose.yml` builds the console image and runs it with the
-host's Docker socket mounted in, on port 8000 (override with
-`PG4ALL_PORT`). It also bind-mounts `build_output/`, `secrets/`, and
+host's Docker socket mounted in, bound to `127.0.0.1:8000` — loopback
+only, never the network (override the port with `PG4ALL_PORT`). Reach it
+from another machine over an SSH tunnel:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 <host>   # then open http://localhost:8000
+```
+
+`PG4ALL_BIND=0.0.0.0` publishes it to the network instead. That exposes
+an unauthenticated, host-root-equivalent console that serves every
+build's superuser password in cleartext — it's spelled out in full rather
+than left as a default so that it can't happen by accident.
+
+It also bind-mounts `build_output/`, `secrets/`, and
 `credentials/` to the host, so re-running it replaces the previous
 container without losing the credential store or any per-build
 `docker-compose.yml` generated for companion services — those live at a
@@ -146,6 +168,8 @@ real host path (`build_output/<build_id>/`) the operator can `cd` into.
 
 `./scripts/run.sh` is a thin wrapper around the same command, if you'd
 rather not type `PG4ALL_PORT=... docker compose up --build -d` directly.
+It prints the tunnel command, and warns loudly if you've overridden the
+bind.
 
 ## Tests
 
