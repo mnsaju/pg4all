@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block page_title %}Build deleted{% endblock %}
+{% block page_subtitle %}{{ build_id }}{% endblock %}
+{% block content %}
+<div class="status-banner ok">Deleted</div>
+
+<table class="builds-table">
+  <tbody>
+    {% for done, message in outcomes %}
+    <tr>
+      <td style="width: 5rem;">
+        <span class="badge {{ 'badge-risk-low' if done else 'badge-risk-medium' }}">
+          {{ 'done' if done else 'skipped' }}
+        </span>
+      </td>
+      <td>{{ message }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<a href="/builds" class="btn-link">&larr; back to Builds</a>
+{% endblock %}

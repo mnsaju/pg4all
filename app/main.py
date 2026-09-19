@@ -8,13 +8,14 @@ from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from app.builder import (
     auth_store, build_store, compose_gen, credential_store, monitoring_gen, port_store,
 )
 from app.builder.host_ports import published_host_ports
 from app.builder.dockerfile_gen import BUILD_OUTPUT_DIR, create_build_context
-from app.builder.docker_build import build_image
+from app.builder.docker_build import build_image, remove_image
 from app.builder.smoke_test import run_smoke_test
 from app.core import (
     auth, credentials, extensions, hardware, monitoring, parameters, pg_versions, ports,
@@ -537,6 +538,102 @@ def build_progress(request: Request, build_id: str):
     if context is None:
         return HTMLResponse("", status_code=404)
     return templates.TemplateResponse(request, "_build_progress.html", context)
+
+
+def _builds_sharing_tag(build_id: str, image_tag: str) -> list[str]:
+    """Other builds whose image is this same tag.
+
+    Tags are `pg4all/postgres:<major>-<workload>-<tier>`, so two builds of
+    the same combination are the same tag — the later one overwrote the
+    earlier. Removing "this build's image" would therefore take an image
+    another record still points at, so the option isn't offered when that
+    is true.
+    """
+    return [
+        other.build_id
+        for other in credential_store.list_credentials()
+        if other.build_id != build_id and other.image_tag == image_tag
+    ]
+
+
+def _delete_context(build_id: str) -> dict | None:
+    """What a deletion would cover, for the confirmation page and the act."""
+    if not build_store.is_valid_build_id(build_id):
+        return None
+
+    build_dir = BUILD_OUTPUT_DIR / build_id
+    credential = credential_store.load_credential(build_id)
+    build = build_store.load(build_dir)
+    if credential is None and build is None and not build_dir.is_dir():
+        return None
+
+    image_tag = (
+        credential.image_tag if credential else (build.image_tag if build else None)
+    )
+    return {
+        "build_id": build_id,
+        "credential": credential,
+        "build": build,
+        "image_tag": image_tag,
+        "has_directory": build_dir.is_dir(),
+        "shared_with": _builds_sharing_tag(build_id, image_tag) if image_tag else [],
+        "is_running": bool(build and build.is_running),
+    }
+
+
+@app.post("/builds/{build_id}/delete", response_class=HTMLResponse)
+async def delete_build(request: Request, build_id: str):
+    context = _delete_context(build_id)
+    if context is None:
+        return templates.TemplateResponse(
+            request, "credential_not_found.html", {"build_id": build_id},
+            status_code=404,
+        )
+
+    form = await request.form()
+    if form.get("confirm") != "1":
+        return templates.TemplateResponse(request, "confirm_delete.html", context)
+
+    # A running build would carry on writing into the directory after it
+    # was removed, leaving a half-rebuilt one behind.
+    if context["is_running"]:
+        return templates.TemplateResponse(
+            request, "confirm_delete.html",
+            {**context, "error": "This build is still running. Wait for it to finish."},
+            status_code=409,
+        )
+
+    outcomes: list[tuple[bool, str]] = []
+
+    removed_dir = build_store.delete_build(BUILD_OUTPUT_DIR, build_id)
+    outcomes.append((
+        removed_dir,
+        f"Removed build_output/{build_id}/ and everything in it."
+        if removed_dir else "No build directory to remove.",
+    ))
+
+    removed_credential = credential_store.delete_credential(build_id)
+    outcomes.append((
+        removed_credential,
+        "Deleted the stored superuser credential."
+        if removed_credential else "No stored credential to delete.",
+    ))
+
+    if form.get("remove_image") == "1" and context["image_tag"]:
+        if context["shared_with"]:
+            outcomes.append((
+                False,
+                f"Kept image {context['image_tag']}: "
+                f"{len(context['shared_with'])} other build(s) still use that tag.",
+            ))
+        else:
+            outcomes.append(
+                await run_in_threadpool(remove_image, context["image_tag"])
+            )
+
+    return templates.TemplateResponse(
+        request, "build_deleted.html", {**context, "outcomes": outcomes}
+    )
 
 
 @app.get("/builds", response_class=HTMLResponse)

@@ -25,9 +25,17 @@ something honest at startup.
 """
 
 import json
+import re
+import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+
+# Build ids are uuid4().hex. Anything else is not a build id, and since
+# these arrive as URL path parameters and end up in shutil.rmtree, the
+# check lives here next to the path construction rather than at each call
+# site where it could be forgotten exactly once.
+BUILD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 RUNNING = "running"
 SUCCEEDED = "succeeded"
@@ -166,6 +174,42 @@ def read_log(build_dir: Path) -> str:
         return path.read_text()
     except OSError:  # pragma: no cover - transient read race
         return ""
+
+
+def is_valid_build_id(build_id: str) -> bool:
+    return bool(BUILD_ID_RE.match(build_id or ""))
+
+
+def build_dir_for(build_output_dir: Path, build_id: str) -> Path:
+    """The directory for a build id, refusing anything that isn't one.
+
+    Callers never build this path themselves: a traversal here is a
+    recursive delete outside the build tree.
+    """
+    if not is_valid_build_id(build_id):
+        raise ValueError(f"Not a build id: {build_id!r}")
+
+    target = (build_output_dir / build_id).resolve()
+    root = build_output_dir.resolve()
+    if target.parent != root:
+        # Unreachable given the regex; kept because the cost of being wrong
+        # about that is deleting something outside build_output.
+        raise ValueError(f"Build path escapes the build directory: {target}")
+    return target
+
+
+def delete_build(build_output_dir: Path, build_id: str) -> bool:
+    """Remove a build's directory and everything in it.
+
+    Returns whether there was anything to remove. Irreversible: this takes
+    the Dockerfile, the generated conf, the compose file, any monitoring
+    config and the build log.
+    """
+    target = build_dir_for(build_output_dir, build_id)
+    if not target.is_dir():
+        return False
+    shutil.rmtree(target)
+    return True
 
 
 def mark_interrupted_builds(build_output_dir: Path) -> int:

@@ -101,6 +101,19 @@ with the resulting `postgresql.conf` baked in.
   host, not directly; that also covers "not in cleartext over the network"
   without pgAdmin needing to terminate TLS itself.
 
+Builds can be deleted from the Builds page. That removes
+`build_output/<build_id>/` and the stored credential, and optionally the
+Docker image — but only when no other build points at that tag, because
+builds of the same version, workload and tier share one
+(`pg4all/postgres:17-oltp-medium`), so "delete this build's image" would
+otherwise take an image another record still references. The image removal
+is never forced: if a container is still running from it the daemon
+refuses and that refusal is reported rather than overridden. A running
+build can't be deleted at all — it would carry on writing into a directory
+that no longer exists. Deletion is confirmed on its own page first, and
+the credential is not recoverable afterwards, so a container still running
+from that image is left with no record of its password.
+
 No database, no accounts. The one thing pg4all *does* persist is the
 generated superuser credential for each build (see below) — everything
 else is stateless, form-driven, for a single trusted operator.

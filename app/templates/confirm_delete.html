@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block page_title %}Delete build{% endblock %}
+{% block page_subtitle %}{{ build_id }}{% endblock %}
+{% block content %}
+{% if error %}
+<div class="status-banner error">{{ error }}</div>
+{% else %}
+<div class="status-banner warn">This cannot be undone</div>
+{% endif %}
+
+<p class="field-hint">
+  {% if credential %}
+  Built {{ credential.created_at }} &middot; image tag
+  <code>{{ credential.image_tag }}</code>
+  {% else %}
+  No stored credential — only build artifacts on disk remain for this build.
+  {% endif %}
+</p>
+
+<h2 class="category-heading">What will be removed</h2>
+<table class="builds-table">
+  <tbody>
+    <tr>
+      <td><code>build_output/{{ build_id }}/</code></td>
+      <td>
+        {% if has_directory %}
+        The Dockerfile, generated <code>postgresql.conf</code>, compose file,
+        any monitoring config, and the build log.
+        {% else %}
+        Already gone.
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td>Superuser credential</td>
+      <td>
+        {% if credential %}
+        The stored password for this build. It is not recoverable afterwards —
+        if a container built from this image is still running, you will have no
+        record of its password.
+        {% else %}
+        Already gone.
+        {% endif %}
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<form method="post" action="/builds/{{ build_id }}/delete">
+  <input type="hidden" name="confirm" value="1">
+
+  {% if image_tag %}
+  <h2 class="category-heading">The Docker image</h2>
+  <div class="param-card">
+    <div class="param-info" style="flex: 1 1 100%;">
+      {% if shared_with %}
+      <p class="param-desc">
+        <code>{{ image_tag }}</code> is also the image tag of
+        {{ shared_with|length }} other build{{ 's' if shared_with|length != 1 }}
+        — builds of the same version, workload and hardware tier share a tag.
+        Removing it would take an image those records still point at, so it is
+        kept.
+      </p>
+      {% else %}
+      <label class="param-name-row" style="cursor: pointer;">
+        <input type="checkbox" name="remove_image" value="1">
+        <span class="param-name">Also remove image <code>{{ image_tag }}</code></span>
+      </label>
+      <p class="param-desc">
+        No other build uses this tag. If a container is still running from it,
+        the daemon will refuse and say so rather than being forced.
+      </p>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="action-bar">
+    <a href="/builds" class="btn btn-primary">&larr; Keep it</a>
+    <button type="submit" class="btn btn-secondary">Delete permanently</button>
+  </div>
+</form>
+{% endblock %}

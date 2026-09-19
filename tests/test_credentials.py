@@ -80,3 +80,35 @@ def test_list_credentials_returns_most_recent_first(isolated_store):
     credential_store.save_credential(newer)
 
     assert [r.build_id for r in credential_store.list_credentials()] == ["newer", "older"]
+
+
+def test_deleting_a_credential_removes_it(tmp_path, monkeypatch):
+    """The store only ever grew before this: every build kept its superuser
+    password on disk forever, including for images long since deleted."""
+    monkeypatch.setattr(credential_store, "SECRETS_DIR", tmp_path / "secrets")
+    monkeypatch.setattr(credential_store, "KEY_FILE", tmp_path / "secrets" / "master.key")
+    monkeypatch.setattr(credential_store, "CREDENTIALS_DIR", tmp_path / "credentials")
+
+    record = credentials.CredentialRecord(
+        build_id="f" * 32, username="postgres", password="secret",
+        image_tag="pg4all/postgres:17-oltp-medium", pg_major="17",
+        created_at="2026-01-01T00:00:00+00:00", build_ok=True,
+    )
+    credential_store.save_credential(record)
+    assert credential_store.load_credential("f" * 32) is not None
+
+    assert credential_store.delete_credential("f" * 32) is True
+    assert credential_store.load_credential("f" * 32) is None
+    assert credential_store.list_credentials() == []
+
+    # Idempotent: deleting it again is not an error.
+    assert credential_store.delete_credential("f" * 32) is False
+
+
+def test_deleting_a_credential_refuses_a_path_instead_of_an_id(tmp_path, monkeypatch):
+    import pytest
+
+    monkeypatch.setattr(credential_store, "CREDENTIALS_DIR", tmp_path / "credentials")
+    for bad in ("../master", "", "./x", "a/b"):
+        with pytest.raises(ValueError):
+            credential_store.delete_credential(bad)

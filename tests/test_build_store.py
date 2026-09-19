@@ -87,3 +87,51 @@ def test_a_build_left_running_by_a_restart_is_marked_interrupted(tmp_path):
 
 def test_marking_interrupted_builds_is_safe_when_nothing_has_been_built(tmp_path):
     assert build_store.mark_interrupted_builds(tmp_path / "missing") == 0
+
+
+# --- deletion ----------------------------------------------------------
+
+def test_a_build_id_is_thirty_two_hex_characters_and_nothing_else():
+    assert build_store.is_valid_build_id("a" * 32)
+    assert build_store.is_valid_build_id("0123456789abcdef" * 2)
+    for bad in ("", "..", "../etc", "A" * 32, "a" * 31, "a" * 33, "x/y", None):
+        assert not build_store.is_valid_build_id(bad), bad
+
+
+def test_a_path_that_is_not_a_build_id_is_refused_before_any_deletion(tmp_path):
+    """This value arrives as a URL path parameter and ends up in
+    shutil.rmtree, so the check has to happen before the path is used."""
+    import pytest
+
+    for bad in ("../../etc", "..", "", "x/y", "A" * 32):
+        with pytest.raises(ValueError):
+            build_store.build_dir_for(tmp_path, bad)
+        with pytest.raises(ValueError):
+            build_store.delete_build(tmp_path, bad)
+
+
+def test_deleting_a_build_removes_the_whole_directory(tmp_path):
+    build_id = "b" * 32
+    build_dir = start(tmp_path, build_id)
+    build_store.append_log(build_dir, "Step 1/2")
+    (build_dir / "docker-compose.yml").write_text("services: {}")
+    (build_dir / "monitoring").mkdir()
+    (build_dir / "monitoring" / "prometheus.yml").write_text("global: {}")
+
+    assert build_store.delete_build(tmp_path, build_id) is True
+    assert not build_dir.exists()
+
+
+def test_deleting_a_build_that_is_already_gone_is_not_an_error(tmp_path):
+    assert build_store.delete_build(tmp_path, "c" * 32) is False
+
+
+def test_deleting_one_build_leaves_the_others_alone(tmp_path):
+    keep = start(tmp_path, "d" * 32)
+    drop = start(tmp_path, "e" * 32)
+
+    build_store.delete_build(tmp_path, "e" * 32)
+
+    assert keep.exists()
+    assert not drop.exists()
+    assert build_store.load(keep) is not None

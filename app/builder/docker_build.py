@@ -19,7 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import docker
-from docker.errors import DockerException
+from docker.errors import APIError, DockerException, ImageNotFound
 
 
 class BuildResult:
@@ -27,6 +27,32 @@ class BuildResult:
         self.ok = ok
         self.tag = tag
         self.log = log
+
+
+def remove_image(tag: str) -> tuple[bool, str]:
+    """Remove an image tag from the daemon.
+
+    Deliberately not forced: if a container is still running from this
+    image, the daemon refuses and that refusal is reported rather than
+    overridden. Someone is using it, and a console cleaning up its own
+    records is not reason enough to pull it out from under them.
+    """
+    try:
+        client = docker.from_env()
+    except DockerException as exc:
+        return False, f"Could not reach the Docker daemon: {exc}"
+
+    try:
+        client.images.remove(tag)
+    except ImageNotFound:
+        return False, f"Image {tag} was not on the daemon."
+    except APIError as exc:
+        reason = getattr(exc, "explanation", None) or str(exc)
+        return False, f"Could not remove image {tag}: {reason}"
+    except DockerException as exc:
+        return False, f"Could not remove image {tag}: {exc}"
+
+    return True, f"Removed image {tag}."
 
 
 def _emit(log: list[str], on_log: Callable[[str], None] | None, line: str) -> None:

@@ -687,3 +687,19 @@ code {
 .state-succeeded { background: var(--success-soft); color: var(--success); }
 .state-failed { background: var(--danger-soft); color: var(--danger); }
 .state-interrupted { background: var(--warning-soft); color: var(--warning); }
+
+/* Inline delete controls */
+
+.inline-form { display: inline; margin-left: 0.75rem; }
+
+.btn-link-danger {
+  font: inherit;
+  color: var(--danger);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.btn-link-danger:hover { color: var(--text); }

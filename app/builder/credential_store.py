@@ -53,6 +53,23 @@ def load_credential(build_id: str) -> CredentialRecord | None:
     return from_json(plaintext.decode())
 
 
+def delete_credential(build_id: str) -> bool:
+    """Remove one build's stored credential. Returns whether it existed.
+
+    The counterpart the store never had: it only ever grew, so every build
+    ever made kept its superuser password on disk indefinitely, including
+    for images long since deleted.
+    """
+    if not build_id or "/" in build_id or "\\" in build_id or build_id.startswith("."):
+        raise ValueError(f"Not a build id: {build_id!r}")
+
+    path = CREDENTIALS_DIR / f"{build_id}.enc"
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
+
+
 def list_credentials() -> list[CredentialRecord]:
     """All stored build records, most recent first.
 

@@ -33,6 +33,9 @@
       </td>
       <td>
         <a href="/builds/{{ record.build_id }}" class="btn-link">open &rarr;</a>
+        <form method="post" action="/builds/{{ record.build_id }}/delete" class="inline-form">
+          <button type="submit" class="btn-link btn-link-danger">delete</button>
+        </form>
       </td>
     </tr>
     {% endfor %}

@@ -6,7 +6,14 @@
   {% include "_build_progress.html" %}
 </div>
 
-<a href="/" class="btn-link">&larr; back to Config Tuner</a>
+<div class="action-bar">
+  <a href="/" class="btn-link">&larr; back to Config Tuner</a>
+  {% if build.is_terminal %}
+  <form method="post" action="/builds/{{ build.build_id }}/delete" class="inline-form">
+    <button type="submit" class="btn-link btn-link-danger">delete this build</button>
+  </form>
+  {% endif %}
+</div>
 
 <script src="/static/build_progress.js"></script>
 {% endblock %}

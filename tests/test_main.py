@@ -662,3 +662,134 @@ def test_the_result_page_explains_how_to_reach_grafana(client):
     assert "ssh -L 13000:127.0.0.1:13000" in resp.text
     assert "Grafana login: admin" in resp.text
     assert "down -v" in resp.text  # the volume warning
+
+
+# --- deleting a build --------------------------------------------------
+
+def _delete(client, build_id, **fields):
+    return client.post(f"/builds/{build_id}/delete", data=fields)
+
+
+def test_deleting_asks_for_confirmation_first(client):
+    resp = _submit_build(client)
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+
+    confirm = _delete(client, build_id)
+    assert confirm.status_code == 200
+    assert "This cannot be undone" in confirm.text
+    assert "Delete permanently" in confirm.text
+
+    # Nothing has actually gone yet.
+    assert (main_module.BUILD_OUTPUT_DIR / build_id).is_dir()
+    assert client.get(f"/credentials/{build_id}").status_code == 200
+
+
+def test_confirming_removes_the_directory_and_the_credential(client):
+    resp = _submit_build(client)
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+
+    done = _delete(client, build_id, confirm="1")
+    assert done.status_code == 200
+    assert "Deleted" in done.text
+
+    assert not (main_module.BUILD_OUTPUT_DIR / build_id).exists()
+    assert client.get(f"/credentials/{build_id}").status_code == 404
+    assert client.get(f"/builds/{build_id}").status_code == 404
+    assert build_id not in client.get("/builds").text
+
+
+def test_deleting_one_build_leaves_another_untouched(client):
+    keep = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
+    drop = _BUILD_ID_RE.search(_submit_build(client, tier="large").text).group(1)
+
+    _delete(client, drop, confirm="1")
+
+    assert client.get(f"/builds/{keep}").status_code == 200
+    assert (main_module.BUILD_OUTPUT_DIR / keep).is_dir()
+
+
+def test_the_image_is_only_removed_when_asked(client, monkeypatch):
+    removed = []
+    monkeypatch.setattr(
+        main_module, "remove_image",
+        lambda tag: (removed.append(tag) or (True, f"Removed image {tag}.")),
+    )
+
+    build_id = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
+    _delete(client, build_id, confirm="1")
+    assert removed == []
+
+    build_id = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
+    _delete(client, build_id, confirm="1", remove_image="1")
+    assert removed == ["pg4all/postgres:17-oltp-medium"]
+
+
+def test_an_image_shared_with_another_build_is_kept(client, monkeypatch):
+    """Two builds of the same version, workload and tier share one image
+    tag. Removing 'this build's image' would take an image the other record
+    still points at."""
+    removed = []
+    monkeypatch.setattr(
+        main_module, "remove_image",
+        lambda tag: (removed.append(tag) or (True, "removed")),
+    )
+
+    first = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
+    second = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
+    assert first != second
+
+    confirm = _delete(client, second)
+    assert "other build" in confirm.text
+    assert 'name="remove_image"' not in confirm.text  # not even offered
+
+    done = _delete(client, second, confirm="1", remove_image="1")
+    assert "Kept image" in done.text
+    assert removed == [], "an image another build still points at was removed"
+
+
+def test_a_failed_image_removal_is_reported_not_swallowed(client, monkeypatch):
+    monkeypatch.setattr(
+        main_module, "remove_image",
+        lambda tag: (False, f"Could not remove image {tag}: in use by a container"),
+    )
+    build_id = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
+
+    done = _delete(client, build_id, confirm="1", remove_image="1")
+    assert "in use by a container" in done.text
+    # The rest of the deletion still happened.
+    assert not (main_module.BUILD_OUTPUT_DIR / build_id).exists()
+
+
+def test_a_running_build_cannot_be_deleted(client):
+    """It would carry on writing into a directory that no longer exists."""
+    build_id = "0" * 32
+    build_store.start(
+        main_module.BUILD_OUTPUT_DIR / build_id,
+        build_id=build_id, image_tag="pg4all/postgres:17-oltp-medium",
+        pg_major="17", pg_full_version="17.11", findings=[],
+    )
+
+    resp = _delete(client, build_id, confirm="1")
+    assert resp.status_code == 409
+    assert "still running" in resp.text
+    assert (main_module.BUILD_OUTPUT_DIR / build_id).is_dir()
+
+
+def test_deleting_an_unknown_build_is_404(client):
+    assert _delete(client, "f" * 32, confirm="1").status_code == 404
+
+
+def test_a_traversal_attempt_is_refused(client):
+    """build_id reaches shutil.rmtree, so anything that isn't a build id has
+    to be rejected before the path is built."""
+    for bad in ("..", "....", "not-a-build-id", "A" * 32):
+        resp = _delete(client, bad, confirm="1")
+        assert resp.status_code == 404, bad
+
+
+def test_deleting_requires_a_session(anonymous_client):
+    resp = anonymous_client.post(
+        f"/builds/{'a' * 32}/delete", data={"confirm": "1"}, follow_redirects=False
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login"
