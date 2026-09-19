@@ -31,13 +31,16 @@ with the resulting `postgresql.conf` baked in.
   as a deliberate, informed choice for the operator.
 - Build the resulting Docker image on demand, with your final values.
 - Optionally include companion services alongside the build (`app/core/services.py`):
-  PgBouncer and a Prometheus `postgres_exporter`, each generated as a sidecar
-  container in a per-build `docker-compose.yml`; and pgBackRest, installed as
-  a package inside the Postgres image itself (it needs direct access to the
-  data directory, unlike the other two, so it doesn't fit the sidecar model)
-  with a generated single-node stanza config. None of these are orchestrated
-  further — you still run `docker compose up`, `pgbackrest backup`, etc.
-  yourself.
+  PgBouncer, a Prometheus `postgres_exporter`, and pgAdmin, each generated as
+  a sidecar container in a per-build `docker-compose.yml`; and pgBackRest,
+  installed as a package inside the Postgres image itself (it needs direct
+  access to the data directory, unlike the others, so it doesn't fit the
+  sidecar model) with a generated single-node stanza config. None of these
+  are orchestrated further — you still run `docker compose up`,
+  `pgbackrest backup`, etc. yourself. pgAdmin is bound to `127.0.0.1` only
+  (never published to the network) — reach it over an SSH tunnel to the
+  host, not directly; that also covers "not in cleartext over the network"
+  without pgAdmin needing to terminate TLS itself.
 
 No database, no accounts. The one thing pg4all *does* persist is the
 generated superuser credential for each build (see below) — everything

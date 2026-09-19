@@ -29,3 +29,11 @@ def test_write_compose_excludes_apt_mode_service_from_sidecars(tmp_path):
     selected = services.resolve(["pgbouncer", "pgbackrest"])
     text = compose_gen.write_compose(tmp_path, "pg4all/postgres:17", "postgres", "pw", selected).read_text()
     assert "pgbackrest" not in text
+
+
+def test_write_compose_binds_pgadmin_to_loopback_only(tmp_path):
+    selected = services.resolve(["pgadmin"])
+    text = compose_gen.write_compose(tmp_path, "pg4all/postgres:17", "postgres", "pw", selected).read_text()
+    assert "pgadmin:" in text
+    assert '"127.0.0.1:5050:80"' in text
+    assert "0.0.0.0" not in text

@@ -52,3 +52,17 @@ def test_compose_fragment_postgres_exporter_has_credentials_and_no_pgbouncer_set
 def test_compose_fragment_is_not_defined_for_apt_mode_service():
     spec = services.get("pgbackrest")
     assert spec.key not in services._FRAGMENT_BUILDERS
+
+
+def test_compose_fragment_pgadmin_is_bound_to_loopback_only():
+    spec = services.get("pgadmin")
+    fragment = services.compose_fragment(spec, "postgres", "s3cret")
+    assert '"127.0.0.1:5050:80"' in fragment
+    assert "0.0.0.0" not in fragment
+
+
+def test_compose_fragment_pgadmin_reuses_postgres_password_as_its_own():
+    spec = services.get("pgadmin")
+    fragment = services.compose_fragment(spec, "postgres", "s3cret")
+    assert f"PGADMIN_DEFAULT_EMAIL: {services.PGADMIN_EMAIL}" in fragment
+    assert "PGADMIN_DEFAULT_PASSWORD: 's3cret'" in fragment

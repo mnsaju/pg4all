@@ -39,6 +39,20 @@ def _resolve_selection(pg_version: str | None, workload_key: str | None, tier_ke
     return version, workload, tier
 
 
+def _build_dir_flags(build_dir: Path) -> dict:
+    """Which companion-service instructions to show for a build, derived
+    from what's actually on disk rather than tracked separately — works
+    identically right after a build and when revisiting it later."""
+    compose_path = build_dir / "docker-compose.yml"
+    compose_text = compose_path.read_text() if compose_path.exists() else ""
+    return {
+        "has_compose": bool(compose_text),
+        "has_pgbackrest": (build_dir / "pgbackrest.conf").exists(),
+        "has_pgadmin": "pgadmin:" in compose_text,
+        "pgadmin_email": services.PGADMIN_EMAIL,
+    }
+
+
 def _tuner_stats(groups: list[parameters.CategoryGroup]) -> dict:
     all_rows = [row for group in groups for row in group.rows]
     tuned_rows = [row for row in all_rows if row.recommended_value != row.default_value]
@@ -152,11 +166,8 @@ async def build(request: Request):
     )
     credential_store.save_credential(record)
 
-    compose_path = (
+    if result.ok:
         compose_gen.write_compose(context_dir, tag, record.username, password, selected_services)
-        if result.ok
-        else None
-    )
 
     return templates.TemplateResponse(
         request,
@@ -165,8 +176,7 @@ async def build(request: Request):
             "result": result,
             "pg_version": version,
             "credential": record,
-            "has_compose": compose_path is not None,
-            "has_pgbackrest": pgbackrest_conf is not None,
+            **_build_dir_flags(context_dir),
         },
     )
 
@@ -189,9 +199,5 @@ def show_credential(request: Request, build_id: str):
     return templates.TemplateResponse(
         request,
         "credential.html",
-        {
-            "credential": record,
-            "has_compose": (build_dir / "docker-compose.yml").exists(),
-            "has_pgbackrest": (build_dir / "pgbackrest.conf").exists(),
-        },
+        {"credential": record, **_build_dir_flags(build_dir)},
     )

@@ -19,6 +19,15 @@ different architecture from what this registry supports today.
 
 from dataclasses import dataclass
 
+# pgAdmin's own login isn't a secret in itself (it's a fixed, documented
+# address, not a generated value) — only the password behind it is, and
+# that reuses the build's Postgres superuser password rather than
+# generating a second secret to track. Not ".local" — pgAdmin's email
+# validator rejects RFC 2606/IANA special-use TLDs (.local, .test,
+# .example, .invalid, .localhost) outright, even with delivery checks
+# off, and fails silently into a restart loop rather than a clear error.
+PGADMIN_EMAIL = "admin@pg4all.dev"
+
 
 @dataclass(frozen=True)
 class ServiceSpec:
@@ -60,6 +69,19 @@ SERVICES: list[ServiceSpec] = [
         "instance with the same superuser credential.",
         mode="sidecar", image="quay.io/prometheuscommunity/postgres-exporter:v0.20.1",
         apt_package=None, risk="low", default_selected=False,
+    ),
+    ServiceSpec(
+        "pgadmin", "pgAdmin",
+        "Web-based Postgres admin UI, for browsing and querying the built "
+        "database without a separate desktop client. Bound to 127.0.0.1 "
+        "only on port 5050 — never published to the network — so reach it "
+        f"over an SSH tunnel to the host (`ssh -L 5050:127.0.0.1:5050 "
+        f"<host>`, then open http://localhost:5050). Logs in as "
+        f"{PGADMIN_EMAIL} with this build's superuser password; add the "
+        "Postgres connection yourself the first time you open it — pg4all "
+        "doesn't pre-seed it.",
+        mode="sidecar", image="dpage/pgadmin4:9.18.0", apt_package=None,
+        risk="medium", default_selected=False,
     ),
 ]
 
@@ -135,9 +157,25 @@ def _postgres_exporter_fragment(spec: ServiceSpec, username: str, password: str)
     )
 
 
+def _pgadmin_fragment(spec: ServiceSpec, username: str, password: str) -> str:
+    return (
+        f"  {spec.key}:\n"
+        f"    image: {spec.image}\n"
+        f"    environment:\n"
+        f"      PGADMIN_DEFAULT_EMAIL: {PGADMIN_EMAIL}\n"
+        f"      PGADMIN_DEFAULT_PASSWORD: '{password}'\n"
+        f"    ports:\n"
+        f"      - \"127.0.0.1:5050:80\"\n"
+        f"    depends_on:\n"
+        f"      - postgres\n"
+        f"    restart: unless-stopped\n"
+    )
+
+
 _FRAGMENT_BUILDERS = {
     "pgbouncer": _pgbouncer_fragment,
     "postgres_exporter": _postgres_exporter_fragment,
+    "pgadmin": _pgadmin_fragment,
 }
 
 
