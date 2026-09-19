@@ -35,11 +35,17 @@ _STORAGE_COSTS = {
 # are pg4all's own heuristics, kept in the same tier/workload-lookup
 # style as the ones above rather than a more elaborate model.
 
-_MAX_WAL_SIZE_BY_TIER = {
-    "small": "1GB",
-    "medium": "4GB",
-    "large": "8GB",
-}
+# max_wal_size was a per-tier lookup (small 1GB, medium 4GB, large 8GB),
+# which only worked for the three presets. It was exactly RAM/4 in every
+# case, so it is that, and now works for any machine. Clamped to the range
+# the tuner's own slider allows.
+_MAX_WAL_SIZE_MIN_GB = 1
+_MAX_WAL_SIZE_MAX_GB = 16
+
+
+def _max_wal_size(ram_gb: int) -> str:
+    gb = max(_MAX_WAL_SIZE_MIN_GB, min(_MAX_WAL_SIZE_MAX_GB, ram_gb // 4))
+    return f"{gb}GB"
 
 _LOG_MIN_DURATION_MS_BY_WORKLOAD = {
     "web": 1000,
@@ -101,7 +107,7 @@ def generate_conf(workload: Workload, hardware: HardwareTier) -> dict[str, str]:
         "effective_io_concurrency": str(storage_costs["effective_io_concurrency"]),
         "max_worker_processes": str(hardware.vcpu),
         "max_parallel_workers_per_gather": str(max(hardware.vcpu // 2, 1)),
-        "max_wal_size": _MAX_WAL_SIZE_BY_TIER.get(hardware.key, "4GB"),
+        "max_wal_size": _max_wal_size(hardware.ram_gb),
         "log_min_duration_statement": str(
             _LOG_MIN_DURATION_MS_BY_WORKLOAD.get(workload.key, 1000)
         ),

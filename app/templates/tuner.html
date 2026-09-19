@@ -1,39 +1,70 @@
 {% extends "base.html" %}
 {% block content %}
+{# Selection is navigation, not submission: picking a version, workload or
+   machine reloads the page because it changes every recommended value the
+   sliders start from. It sits outside the tuner form because HTML has no
+   nested forms. #}
+<div class="pill-row">
+  <span class="pill-row-label">PostgreSQL version</span>
+  {% for v in pg_versions %}
+  <a class="pill {% if v.major == selected_version.major %}is-active{% endif %}"
+     href="/?pg_version={{ v.major }}&workload={{ selected_workload.key }}&tier={{ selected_tier.key }}">
+    {{ v.major }} <span class="pill-meta">{{ v.full_version }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="pill-row">
+  <span class="pill-row-label">Workload profile</span>
+  {% for w in workloads %}
+  <a class="pill {% if w.key == selected_workload.key %}is-active{% endif %}"
+     href="/?pg_version={{ selected_version.major }}&workload={{ w.key }}&tier={{ selected_tier.key }}">
+    {{ w.label }}
+  </a>
+  {% endfor %}
+</div>
+
+<div class="pill-row">
+  <span class="pill-row-label">Hardware</span>
+  {% for t in tiers %}
+  <a class="pill {% if t.key == selected_tier.key %}is-active{% endif %}"
+     href="/?pg_version={{ selected_version.major }}&workload={{ selected_workload.key }}&tier={{ t.key }}">
+    {{ t.label.split(' (')[0] }}
+    <span class="pill-meta">{{ t.vcpu }}c / {{ t.ram_gb }}G</span>
+  </a>
+  {% endfor %}
+  {% if tier_is_custom %}
+  <span class="pill is-active">Custom <span class="pill-meta">{{ selected_tier.vcpu }}c / {{ selected_tier.ram_gb }}G</span></span>
+  {% endif %}
+</div>
+
+<form method="get" action="/" class="hardware-form">
+  <input type="hidden" name="pg_version" value="{{ selected_version.major }}">
+  <input type="hidden" name="workload" value="{{ selected_workload.key }}">
+  <span class="pill-row-label">Or the machine you actually have</span>
+  <label class="port-field">
+    <input type="number" class="port-input port-input-narrow" name="vcpu"
+           min="1" max="256" step="1" value="{{ selected_tier.vcpu }}" required>
+    <span class="port-suffix">vCPU</span>
+  </label>
+  <label class="port-field">
+    <input type="number" class="port-input port-input-narrow" name="ram_gb"
+           min="1" max="4096" step="1" value="{{ selected_tier.ram_gb }}" required>
+    <span class="port-suffix">GB RAM</span>
+  </label>
+  <label class="port-field">
+    <select class="port-input" name="storage">
+      <option value="ssd" {% if selected_tier.storage == 'ssd' %}selected{% endif %}>SSD / NVMe</option>
+      <option value="hdd" {% if selected_tier.storage == 'hdd' %}selected{% endif %}>Spinning disk</option>
+    </select>
+  </label>
+  <button type="submit" class="btn btn-secondary">Use this</button>
+</form>
+
 <form id="tuner-form" method="post" action="/build">
   <input type="hidden" name="pg_version" value="{{ selected_version.major }}">
   <input type="hidden" name="workload" value="{{ selected_workload.key }}">
   <input type="hidden" name="tier" value="{{ selected_tier.key }}">
-
-  <div class="pill-row">
-    <span class="pill-row-label">PostgreSQL version</span>
-    {% for v in pg_versions %}
-    <a class="pill {% if v.major == selected_version.major %}is-active{% endif %}"
-       href="/?pg_version={{ v.major }}&workload={{ selected_workload.key }}&tier={{ selected_tier.key }}">
-      {{ v.major }} <span class="pill-meta">{{ v.full_version }}</span>
-    </a>
-    {% endfor %}
-  </div>
-
-  <div class="pill-row">
-    <span class="pill-row-label">Workload profile</span>
-    {% for w in workloads %}
-    <a class="pill {% if w.key == selected_workload.key %}is-active{% endif %}"
-       href="/?pg_version={{ selected_version.major }}&workload={{ w.key }}&tier={{ selected_tier.key }}">
-      {{ w.label }}
-    </a>
-    {% endfor %}
-  </div>
-
-  <div class="pill-row">
-    <span class="pill-row-label">Hardware tier</span>
-    {% for t in tiers %}
-    <a class="pill {% if t.key == selected_tier.key %}is-active{% endif %}"
-       href="/?pg_version={{ selected_version.major }}&workload={{ selected_workload.key }}&tier={{ t.key }}">
-      {{ t.label.split(' (')[0] }}
-    </a>
-    {% endfor %}
-  </div>
 
   <div class="stat-grid">
     <div class="stat-tile">

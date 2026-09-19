@@ -13,9 +13,12 @@ with the resulting `postgresql.conf` baked in.
 - Pick from the latest 3 supported PostgreSQL majors (`app/core/pg_versions.py`
   — hardcoded, update by hand when a new major/minor ships).
 - Pick a workload profile (web / OLTP / data warehouse / mixed / desktop —
-  PGTune's own categories) and a hardware tier (small / medium / large
-  presets — not a precise sizing calculator; there's no data-volume/
-  throughput input to justify more precision than that yet). Together
+  PGTune's own categories) and the machine: three presets, or the vCPU,
+  RAM and storage type you actually have. The presets were never a
+  simplification of the formulas — those only read vCPU, RAM and storage
+  and would have accepted anything — they were a restriction on the input,
+  which meant a 12-core, 48 GB server had to pretend to be "large (8/32)"
+  and got `shared_buffers` of 8 GB instead of 12. Together
   these compute a recommended value for each of 17 tunable parameters,
   grouped into Memory / Connections / Query / WAL / Durability / Logging /
   Autovacuum — a set cross-checked against several independent PostgreSQL

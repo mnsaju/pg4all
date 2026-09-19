@@ -935,3 +935,40 @@ def test_the_conf_download_needs_a_session(anonymous_client):
     ):
         resp = anonymous_client.request(method, path, follow_redirects=False)
         assert resp.status_code == 303, path
+
+
+# --- custom hardware ---------------------------------------------------
+
+def test_the_tuner_accepts_a_real_machines_specs(client):
+    resp = client.get("/?pg_version=17&workload=oltp&vcpu=12&ram_gb=48&storage=ssd")
+    assert resp.status_code == 200
+    assert 'name="tier" value="12c48g"' in resp.text
+    assert "12 vCPU / 48 GB" in resp.text or "12c / 48G" in resp.text
+    # The conf preview must reflect the real machine, not the nearest
+    # preset: 48 GB at the usual quarter share is 12 GB.
+    assert "shared_buffers = 12288MB" in resp.text
+
+
+def test_nonsense_hardware_falls_back_instead_of_erroring(client):
+    resp = client.get("/?workload=oltp&vcpu=0&ram_gb=999999")
+    assert resp.status_code == 200
+    assert 'name="tier" value="medium"' in resp.text  # oltp's recommendation
+
+
+def test_a_custom_machine_survives_into_the_build(client):
+    resp = _submit_build(client, tier="12c48g")
+    assert resp.status_code == 200
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+
+    conf = (main_module.BUILD_OUTPUT_DIR / build_id / "postgresql.conf").read_text()
+    assert "shared_buffers = 12288MB" in conf      # 48 GB / 4
+    assert "max_worker_processes = 12" in conf
+    # The nearest preset (large, 8/32) would have given these instead.
+    assert "shared_buffers = 8192MB" not in conf
+
+
+def test_a_custom_machine_reads_sensibly_in_the_image_tag(client):
+    resp = _submit_build(client, tier="12c48g")
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+    record = credential_store.load_credential(build_id)
+    assert record.image_tag == f"pg4all/postgres:17-oltp-12c48g-{build_id[:8]}"

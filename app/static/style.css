@@ -705,3 +705,13 @@ code {
 .btn-link-danger:hover { color: var(--text); }
 
 .conf-preview { max-height: 20rem; font-size: 0.82rem; }
+
+.hardware-form {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: -0.5rem 0 1.5rem;
+}
+
+.port-input-narrow { width: 5.5rem; }
