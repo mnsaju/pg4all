@@ -15,11 +15,11 @@ from app.builder import (
 )
 from app.builder.host_ports import published_host_ports
 from app.builder.dockerfile_gen import BUILD_OUTPUT_DIR, create_build_context
-from app.builder.docker_build import build_image, remove_image
+from app.builder.docker_build import build_image, remove_build_image, remove_image, tag_image
 from app.builder.smoke_test import run_smoke_test
 from app.core import (
-    auth, credentials, extensions, hardware, monitoring, parameters, pg_versions, ports,
-    services, validation, workloads,
+    auth, credentials, extensions, hardware, image_tags, monitoring, parameters, pg_versions,
+    ports, services, validation, workloads,
 )
 from app.core.conf_generator import render_conf
 
@@ -373,7 +373,12 @@ async def build(request: Request, background_tasks: BackgroundTasks):
         extra_apt_packages=service_apt_packages,
         pgbackrest_conf=pgbackrest_conf,
     )
-    tag = f"pg4all/postgres:{version.major}-{wl.key}-{hw_tier.key}"
+    # The build owns this tag permanently; the short series tag is moved
+    # onto it after a successful build. Everything generated for this build
+    # — compose file, run instructions, smoke test — names the build tag, so
+    # a later build of the same combination cannot change what this one runs.
+    tag = image_tags.build_tag(version.major, wl.key, hw_tier.key, build_id)
+    series = image_tags.series_tag(version.major, wl.key, hw_tier.key)
     port_store.write_ports(context_dir, host_ports)
 
     # The credential is generated and stored before the build starts, not
@@ -408,6 +413,7 @@ async def build(request: Request, background_tasks: BackgroundTasks):
         context_dir=context_dir,
         tag=tag,
         pg_major=version.major,
+        series_tag=series,
         conf_values=conf_values,
         selected_services=selected_services,
         username=record.username,
@@ -423,6 +429,7 @@ def _run_build(
     context_dir: Path,
     tag: str,
     pg_major: str,
+    series_tag: str,
     conf_values: dict,
     selected_services: list,
     username: str,
@@ -446,6 +453,16 @@ def _run_build(
         if not result.ok:
             build_store.finish(context_dir, build_store.FAILED, build_ok=False)
             return
+
+        # Only a build that actually succeeded gets to own the short name.
+        moved, message = tag_image(tag, series_tag)
+        build_store.append_log(context_dir, f"[pg4all] {message}")
+        if not moved:
+            build_store.append_log(
+                context_dir,
+                f"[pg4all] {series_tag} still points wherever it did before; "
+                f"{tag} is this build's image either way.",
+            )
 
         compose_gen.write_compose(
             context_dir, tag, username, password, selected_services, host_ports
@@ -556,6 +573,13 @@ def _builds_sharing_tag(build_id: str, image_tag: str) -> list[str]:
     ]
 
 
+def _series_tag_for(image_tag: str | None) -> str | None:
+    """The short tag a build tag belongs under, or None if there isn't one."""
+    if not image_tag or not image_tags.is_build_tag(image_tag):
+        return None
+    return image_tag.rsplit("-", 1)[0]
+
+
 def _delete_context(build_id: str) -> dict | None:
     """What a deletion would cover, for the confirmation page and the act."""
     if not build_store.is_valid_build_id(build_id):
@@ -575,6 +599,8 @@ def _delete_context(build_id: str) -> dict | None:
         "credential": credential,
         "build": build,
         "image_tag": image_tag,
+        "series_tag": _series_tag_for(image_tag),
+        "is_build_tag": image_tags.is_build_tag(image_tag or ""),
         "has_directory": build_dir.is_dir(),
         "shared_with": _builds_sharing_tag(build_id, image_tag) if image_tag else [],
         "is_running": bool(build and build.is_running),
@@ -626,10 +652,21 @@ async def delete_build(request: Request, build_id: str):
                 f"Kept image {context['image_tag']}: "
                 f"{len(context['shared_with'])} other build(s) still use that tag.",
             ))
-        else:
-            outcomes.append(
-                await run_in_threadpool(remove_image, context["image_tag"])
+        elif image_tags.is_build_tag(context["image_tag"]):
+            outcomes.extend(
+                await run_in_threadpool(
+                    remove_build_image, context["image_tag"], context["series_tag"]
+                )
             )
+        else:
+            # A record from before builds had their own tag. Its tag is the
+            # shared series name, so removing it would take whatever image
+            # happens to hold it now — which is not this build's.
+            outcomes.append((
+                False,
+                f"Kept image {context['image_tag']}: this build predates "
+                "per-build image tags, so that tag no longer identifies its image.",
+            ))
 
     return templates.TemplateResponse(
         request, "build_deleted.html", {**context, "outcomes": outcomes}

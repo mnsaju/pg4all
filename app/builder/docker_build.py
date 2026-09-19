@@ -29,6 +29,62 @@ class BuildResult:
         self.log = log
 
 
+def tag_image(source_tag: str, new_tag: str) -> tuple[bool, str]:
+    """Point another tag at an image that already exists.
+
+    Used to move the series tag onto the newest build. Both tags then name
+    one image — Docker tags are pointers, so this costs nothing but the
+    name.
+    """
+    repository, _, version = new_tag.partition(":")
+    try:
+        client = docker.from_env()
+        client.images.get(source_tag).tag(repository, tag=version or "latest")
+    except ImageNotFound:
+        return False, f"Image {source_tag} was not on the daemon."
+    except DockerException as exc:
+        return False, f"Could not tag {source_tag} as {new_tag}: {exc}"
+    return True, f"Tagged {source_tag} as {new_tag}."
+
+
+def _image_id(client, tag: str) -> str | None:
+    try:
+        return client.images.get(tag).id
+    except (ImageNotFound, DockerException):
+        return None
+
+
+def remove_build_image(build_tag: str, series_tag: str | None) -> list[tuple[bool, str]]:
+    """Remove a build's own tag, and the series tag if it still points here.
+
+    The series tag follows the newest build, so it only belongs to this one
+    while it resolves to the same image. Resolving both *before* removing
+    anything matters: once the build tag is gone there is nothing left to
+    compare the series tag against.
+    """
+    try:
+        client = docker.from_env()
+    except DockerException as exc:
+        return [(False, f"Could not reach the Docker daemon: {exc}")]
+
+    build_id = _image_id(client, build_tag)
+    series_points_here = (
+        series_tag is not None
+        and build_id is not None
+        and _image_id(client, series_tag) == build_id
+    )
+
+    outcomes = [remove_image(build_tag)]
+    if series_points_here:
+        outcomes.append(remove_image(series_tag))
+    elif series_tag:
+        outcomes.append((
+            False,
+            f"Kept {series_tag}: it now points at a newer build's image.",
+        ))
+    return outcomes
+
+
 def remove_image(tag: str) -> tuple[bool, str]:
     """Remove an image tag from the daemon.
 

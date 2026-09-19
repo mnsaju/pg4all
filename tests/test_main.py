@@ -16,6 +16,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from dataclasses import replace
+
 import app.main as main_module
 from app.builder import auth_store, build_store, credential_store, dockerfile_gen, smoke_test
 from app.builder.docker_build import BuildResult
@@ -711,8 +713,9 @@ def test_deleting_one_build_leaves_another_untouched(client):
 def test_the_image_is_only_removed_when_asked(client, monkeypatch):
     removed = []
     monkeypatch.setattr(
-        main_module, "remove_image",
-        lambda tag: (removed.append(tag) or (True, f"Removed image {tag}.")),
+        main_module, "remove_build_image",
+        lambda build_tag, series: (removed.append((build_tag, series))
+                                   or [(True, f"Removed image {build_tag}.")]),
     )
 
     build_id = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
@@ -721,36 +724,96 @@ def test_the_image_is_only_removed_when_asked(client, monkeypatch):
 
     build_id = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
     _delete(client, build_id, confirm="1", remove_image="1")
-    assert removed == ["pg4all/postgres:17-oltp-medium"]
+    assert removed == [(
+        f"pg4all/postgres:17-oltp-medium-{build_id[:8]}",
+        "pg4all/postgres:17-oltp-medium",
+    )]
 
 
-def test_an_image_shared_with_another_build_is_kept(client, monkeypatch):
-    """Two builds of the same version, workload and tier share one image
-    tag. Removing 'this build's image' would take an image the other record
-    still points at."""
-    removed = []
-    monkeypatch.setattr(
-        main_module, "remove_image",
-        lambda tag: (removed.append(tag) or (True, "removed")),
-    )
-
+def test_two_builds_of_the_same_combination_no_longer_share_an_image(client):
+    """The bug this tagging exists for: the tag used to name a category
+    while a build is an event, so the second build silently took the first
+    one's image out from under it."""
     first = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
     second = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
-    assert first != second
 
-    confirm = _delete(client, second)
-    assert "other build" in confirm.text
-    assert 'name="remove_image"' not in confirm.text  # not even offered
+    def tag_of(build_id):
+        page = client.get(f"/builds/{build_id}").text
+        return re.search(r"pg4all/postgres:[\w.\-]+", page).group(0)
 
-    done = _delete(client, second, confirm="1", remove_image="1")
-    assert "Kept image" in done.text
-    assert removed == [], "an image another build still points at was removed"
+    assert tag_of(first) != tag_of(second)
+    assert tag_of(first).endswith(first[:8])
+    assert tag_of(second).endswith(second[:8])
+
+
+def test_the_compose_file_names_the_build_tag_not_the_moving_one(client):
+    """An old build's stack must keep starting the image that build
+    produced, however many times the same combination is rebuilt after."""
+    build_id = _BUILD_ID_RE.search(
+        _submit_build(client, services=["pgbouncer"]).text
+    ).group(1)
+    compose = (
+        main_module.BUILD_OUTPUT_DIR / build_id / "docker-compose.yml"
+    ).read_text()
+
+    assert f"image: pg4all/postgres:17-oltp-medium-{build_id[:8]}" in compose
+    assert "image: pg4all/postgres:17-oltp-medium\n" not in compose
+
+
+def test_a_successful_build_moves_the_series_tag_onto_itself(client, monkeypatch):
+    tagged = []
+    monkeypatch.setattr(
+        main_module, "tag_image",
+        lambda source, new: (tagged.append((source, new)) or (True, "tagged")),
+    )
+    build_id = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
+
+    assert tagged == [(
+        f"pg4all/postgres:17-oltp-medium-{build_id[:8]}",
+        "pg4all/postgres:17-oltp-medium",
+    )]
+
+
+def test_a_failed_build_does_not_take_the_series_tag(client, monkeypatch):
+    monkeypatch.setattr(main_module, "build_image", _fake_build_image(ok=False))
+    monkeypatch.setattr(
+        main_module, "tag_image",
+        lambda source, new: pytest.fail("a failed build must not own the short tag"),
+    )
+    resp = _submit_build(client)
+    assert 'data-state="failed"' in resp.text
+
+
+def test_a_record_predating_per_build_tags_keeps_its_image(client, monkeypatch):
+    """Its tag is the shared series name, so removing it would take
+    whatever image holds that name now — which is not this build's."""
+    called = []
+    monkeypatch.setattr(
+        main_module, "remove_build_image",
+        lambda *a: called.append(a) or [(True, "removed")],
+    )
+    monkeypatch.setattr(
+        main_module, "remove_image", lambda t: called.append(t) or (True, "removed")
+    )
+
+    build_id = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
+    legacy = replace(
+        credential_store.load_credential(build_id),
+        image_tag="pg4all/postgres:17-oltp-medium",
+    )
+    credential_store.save_credential(legacy)
+
+    done = _delete(client, build_id, confirm="1", remove_image="1")
+    assert "predates per-build image tags" in done.text
+    assert called == [], "a shared series tag was removed"
 
 
 def test_a_failed_image_removal_is_reported_not_swallowed(client, monkeypatch):
     monkeypatch.setattr(
-        main_module, "remove_image",
-        lambda tag: (False, f"Could not remove image {tag}: in use by a container"),
+        main_module, "remove_build_image",
+        lambda build_tag, series: [
+            (False, f"Could not remove image {build_tag}: in use by a container")
+        ],
     )
     build_id = _BUILD_ID_RE.search(_submit_build(client).text).group(1)
 

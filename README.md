@@ -101,13 +101,32 @@ with the resulting `postgresql.conf` baked in.
   host, not directly; that also covers "not in cleartext over the network"
   without pgAdmin needing to terminate TLS itself.
 
+Each build gets its own permanent image tag carrying its build id
+(`pg4all/postgres:17-oltp-medium-2dc19e67`, see `app/core/image_tags.py`),
+and the short series tag (`pg4all/postgres:17-oltp-medium`) follows the
+newest build of that combination — the same split Docker has always used
+for release tags and `latest`. Generated compose files and run
+instructions name the build tag, so a build's stack keeps starting the
+image that build produced and the smoke test actually checked.
+
+That split exists because the short tag alone was silently destructive: it
+names a *category* while a build is an *event*, so every rebuild of the
+same version, workload and tier took the previous build's tag. On the
+machine this was found on, 11 records shared 3 tags across four genuinely
+different configurations — and a build that had selected
+`pg_stat_statements` pointed at an image with neither the
+`shared_preload_libraries` line nor the init script, so running its own
+compose file started a database with the extension simply absent and no
+error anywhere. Extra tags cost nothing: an identical build context
+produces an identical image, so a second tag is another pointer to the
+same layers.
+
 Builds can be deleted from the Builds page. That removes
 `build_output/<build_id>/` and the stored credential, and optionally the
-Docker image — but only when no other build points at that tag, because
-builds of the same version, workload and tier share one
-(`pg4all/postgres:17-oltp-medium`), so "delete this build's image" would
-otherwise take an image another record still references. The image removal
-is never forced: if a container is still running from it the daemon
+Docker image — its own build tag, plus the series tag when that still
+points at the same image. Records made before per-build tags exist keep
+their image: a bare series tag no longer identifies the image that build
+produced. The image removal is never forced: if a container is still running from it the daemon
 refuses and that refusal is reported rather than overridden. A running
 build can't be deleted at all — it would carry on writing into a directory
 that no longer exists. Deletion is confirmed on its own page first, and
