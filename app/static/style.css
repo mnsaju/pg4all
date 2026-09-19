@@ -568,3 +568,84 @@ code {
 }
 
 .port-note { margin-top: 0.5rem; font-size: 0.8rem; }
+
+/* Login */
+
+.login-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  margin: 0;
+  padding: 1rem;
+  background: var(--page-bg);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 24rem;
+  padding: 2rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.login-card .brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.login-card .brand-mark { font-weight: 700; font-size: 1.15rem; color: var(--text); }
+.login-card .brand-tag { font-size: 0.8rem; color: var(--text-faint); }
+
+.login-form { display: flex; flex-direction: column; gap: 0.6rem; }
+
+.login-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+}
+
+.login-input {
+  padding: 0.6rem 0.7rem;
+  font-size: 1rem;
+  font-family: var(--mono);
+  color: var(--text);
+  background: var(--card-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.login-input:focus { outline: none; border-color: var(--accent); }
+
+.login-card .btn { margin-top: 0.4rem; text-align: center; }
+
+.login-hint {
+  margin: 1.25rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.login-hint code { font-family: var(--mono); font-size: 0.75rem; }
+
+/* Sign out, in the sidebar footer */
+
+.signout-form { margin-top: 0.75rem; }
+
+.signout-button {
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--sidebar-text-muted);
+  background: transparent;
+  border: 1px solid var(--sidebar-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.signout-button:hover { color: var(--sidebar-text); border-color: var(--sidebar-text-muted); }

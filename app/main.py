@@ -1,29 +1,127 @@
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from app.builder import compose_gen, credential_store, port_store
+from app.builder import auth_store, compose_gen, credential_store, port_store
 from app.builder.host_ports import published_host_ports
 from app.builder.dockerfile_gen import BUILD_OUTPUT_DIR, create_build_context
 from app.builder.docker_build import build_image
 from app.builder.smoke_test import run_smoke_test
 from app.core import (
-    credentials, extensions, hardware, parameters, pg_versions, ports, services, validation,
-    workloads,
+    auth, credentials, extensions, hardware, parameters, pg_versions, ports, services,
+    validation, workloads,
 )
 from app.core.conf_generator import render_conf
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="pg4all console")
+# Reachable without a session. Everything else is protected by default —
+# see require_login. /static is here because the login page needs its
+# stylesheet, and it serves no build data.
+PUBLIC_PATHS = frozenset({"/login"})
+PUBLIC_PREFIXES = ("/static/",)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    password = auth_store.ensure_password()
+    if password:
+        print(
+            "\n"
+            "  ┌─ pg4all console password ─────────────────────────────────\n"
+            "  │\n"
+            f"  │   {password}\n"
+            "  │\n"
+            "  │  Generated on first run and shown once — only its hash is\n"
+            "  │  stored. Save it now.\n"
+            "  │  To rotate: delete secrets/console-password.json, restart.\n"
+            "  └───────────────────────────────────────────────────────────\n",
+            flush=True,
+        )
+    yield
+
+
+app = FastAPI(title="pg4all console", lifespan=lifespan)
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    """Gate every route that isn't explicitly public.
+
+    Deliberately middleware rather than a per-route dependency: a route
+    added later is protected because it exists, not because someone
+    remembered to decorate it. The failure mode of forgetting here is
+    handing out Postgres superuser passwords to anyone who can reach the
+    port, so this fails closed.
+    """
+    path = request.url.path
+    if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES):
+        return await call_next(request)
+
+    token = request.cookies.get(auth.SESSION_COOKIE_NAME)
+    if not auth.verify_session(token, auth_store.load_session_key()):
+        # 303 so a rejected POST becomes a GET of the login page rather
+        # than the browser trying to re-POST the form to it.
+        return RedirectResponse("/login", status_code=303)
+
+    return await call_next(request)
+
+
+def _set_session_cookie(response, token: str) -> None:
+    response.set_cookie(
+        auth.SESSION_COOKIE_NAME,
+        token,
+        max_age=auth.SESSION_MAX_AGE_SECONDS,
+        httponly=True,       # not readable from JavaScript
+        samesite="lax",      # blocks cross-site POSTs to /build
+        # Not Secure: the console is served over plain HTTP on loopback and
+        # reached through an SSH tunnel, which is what provides transport
+        # confidentiality. Setting Secure here would stop the cookie being
+        # sent at all and lock the operator out.
+        secure=False,
+        path="/",
+    )
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_form(request: Request):
+    return templates.TemplateResponse(request, "login.html", {"error": None})
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login(request: Request):
+    form = await request.form()
+    record = auth_store.load_password_record()
+
+    if record is None or not auth.verify_password(form.get("password") or "", record):
+        # One message for both "no password configured" and "wrong
+        # password" — which of the two it is isn't the guesser's business.
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Incorrect password."},
+            status_code=401,
+        )
+
+    response = RedirectResponse("/", status_code=303)
+    _set_session_cookie(response, auth.issue_session(auth_store.load_session_key()))
+    return response
+
+
+@app.post("/logout")
+def logout():
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(auth.SESSION_COOKIE_NAME, path="/")
+    return response
 
 
 def _resolve_selection(pg_version: str | None, workload_key: str | None, tier_key: str | None):

@@ -1,0 +1,44 @@
+{# Standalone: deliberately does not extend base.html, whose sidebar links
+   to pages this visitor can't reach yet. #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in &middot; pg4all</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <div class="brand">
+      <span class="brand-mark">pg4all</span>
+      <span class="brand-tag">console</span>
+    </div>
+
+    {% if error %}
+    <div class="status-banner error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login" class="login-form">
+      <label class="login-label" for="password">Console password</label>
+      <input
+        type="password"
+        id="password"
+        name="password"
+        class="login-input"
+        autocomplete="current-password"
+        autofocus
+        required
+      >
+      <button type="submit" class="btn btn-primary">Sign in</button>
+    </form>
+
+    <p class="login-hint">
+      Generated on first run and printed once to the console's log
+      (<code>docker compose logs pg4all-console</code>). Only its hash is
+      stored. To rotate it, delete <code>secrets/console-password.json</code>
+      and restart.
+    </p>
+  </main>
+</body>
+</html>

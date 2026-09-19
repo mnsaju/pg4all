@@ -10,20 +10,38 @@ credential_store).
 """
 
 import re
+import time
 
 import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main_module
-from app.builder import credential_store, dockerfile_gen, smoke_test
+from app.builder import auth_store, credential_store, dockerfile_gen, smoke_test
 from app.builder.docker_build import BuildResult
 from app.builder.smoke_test import SmokeResult
+from app.core import auth
 
 _BUILD_ID_RE = re.compile(r"/credentials/([a-f0-9]{32})")
 
+CONSOLE_PASSWORD = "test-console-password"
+
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
+def anonymous_client(tmp_path, monkeypatch):
+    """A client with no session, for exercising the auth gate itself."""
+    # Real scrypt cost is ~32 MB and a fraction of a second per hash. That
+    # is the point in production and just tax here, so route tests run it
+    # cheap; tests/test_auth.py covers the real parameters.
+    monkeypatch.setattr(auth, "SCRYPT_N", 2**8)
+    monkeypatch.setattr(auth_store, "SECRETS_DIR", tmp_path / "secrets")
+    monkeypatch.setattr(
+        auth_store, "PASSWORD_FILE", tmp_path / "secrets" / "console-password.json"
+    )
+    monkeypatch.setattr(
+        auth_store, "SESSION_KEY_FILE", tmp_path / "secrets" / "console-session.key"
+    )
+    auth_store.set_password(CONSOLE_PASSWORD)
+
     monkeypatch.setattr(credential_store, "SECRETS_DIR", tmp_path / "secrets")
     monkeypatch.setattr(credential_store, "KEY_FILE", tmp_path / "secrets" / "master.key")
     monkeypatch.setattr(credential_store, "CREDENTIALS_DIR", tmp_path / "credentials")
@@ -48,6 +66,16 @@ def client(tmp_path, monkeypatch):
         ),
     )
     return TestClient(main_module.app)
+
+
+@pytest.fixture
+def client(anonymous_client):
+    """Signed in. Every route but /login and /static needs a session now."""
+    resp = anonymous_client.post(
+        "/login", data={"password": CONSOLE_PASSWORD}, follow_redirects=False
+    )
+    assert resp.status_code == 303, "fixture could not sign in"
+    return anonymous_client
 
 
 def _submit_build(client, **extra_fields):
@@ -330,3 +358,123 @@ def test_older_builds_without_ports_json_fall_back_to_defaults(client):
     later = client.get(f"/credentials/{build_id}")
     assert later.status_code == 200
     assert "-p 5432:5432" in later.text
+
+
+# --- authentication ---------------------------------------------------
+
+PROTECTED_GETS = ["/", "/builds", "/credentials/deadbeef"]
+
+
+@pytest.mark.parametrize("path", PROTECTED_GETS)
+def test_protected_pages_redirect_an_anonymous_visitor_to_login(anonymous_client, path):
+    resp = anonymous_client.get(path, follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login"
+
+
+def test_anonymous_posts_are_refused_too(anonymous_client):
+    for path in ("/build", "/validate"):
+        resp = anonymous_client.post(path, data={}, follow_redirects=False)
+        assert resp.status_code == 303, path
+        assert resp.headers["location"] == "/login"
+
+
+def test_an_anonymous_visitor_cannot_read_a_real_build_credential(anonymous_client, client):
+    """The point of all of this: /credentials/<id> hands out a Postgres
+    superuser password in cleartext, and used to do so to anyone."""
+    build_resp = _submit_build(client)
+    build_id = _BUILD_ID_RE.search(build_resp.text).group(1)
+    password = re.search(r"Password: (\S+)", build_resp.text).group(1)
+
+    anonymous_client.cookies.clear()
+    resp = anonymous_client.get(f"/credentials/{build_id}", follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert password not in resp.text
+    assert build_id not in resp.text
+
+
+def test_the_login_page_itself_is_reachable_without_a_session(anonymous_client):
+    resp = anonymous_client.get("/login")
+    assert resp.status_code == 200
+    assert 'name="password"' in resp.text
+
+
+def test_static_assets_are_reachable_so_the_login_page_can_be_styled(anonymous_client):
+    resp = anonymous_client.get("/static/style.css")
+    assert resp.status_code == 200
+
+
+def test_signing_in_with_the_wrong_password_is_refused(anonymous_client):
+    resp = anonymous_client.post("/login", data={"password": "wrong"})
+    assert resp.status_code == 401
+    assert "Incorrect password" in resp.text
+    assert auth.SESSION_COOKIE_NAME not in resp.cookies
+
+    # and still no access
+    assert anonymous_client.get("/", follow_redirects=False).status_code == 303
+
+
+def test_signing_in_with_the_right_password_grants_access(anonymous_client):
+    resp = anonymous_client.post(
+        "/login", data={"password": CONSOLE_PASSWORD}, follow_redirects=False
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/"
+    assert anonymous_client.get("/").status_code == 200
+
+
+def test_the_session_cookie_is_httponly_and_samesite(anonymous_client):
+    """HttpOnly keeps it away from JavaScript; SameSite=Lax stops another
+    site POSTing to /build with the operator's session."""
+    resp = anonymous_client.post(
+        "/login", data={"password": CONSOLE_PASSWORD}, follow_redirects=False
+    )
+    cookie = resp.headers["set-cookie"].lower()
+    assert "httponly" in cookie
+    assert "samesite=lax" in cookie
+
+
+def test_signing_out_ends_the_session(client):
+    assert client.get("/").status_code == 200
+
+    resp = client.post("/logout", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login"
+    assert client.get("/", follow_redirects=False).status_code == 303
+
+
+def test_a_forged_session_cookie_is_refused(anonymous_client):
+    anonymous_client.cookies.set(auth.SESSION_COOKIE_NAME, "99999999999.deadbeef")
+    assert anonymous_client.get("/", follow_redirects=False).status_code == 303
+
+
+def test_an_expired_session_is_refused(anonymous_client, monkeypatch):
+    key = auth_store.load_session_key()
+    stale = auth.issue_session(
+        key, issued_at=time.time() - auth.SESSION_MAX_AGE_SECONDS - 60
+    )
+    anonymous_client.cookies.set(auth.SESSION_COOKIE_NAME, stale)
+    assert anonymous_client.get("/", follow_redirects=False).status_code == 303
+
+
+def test_every_route_is_protected_unless_explicitly_public(anonymous_client):
+    """The gate is middleware rather than a per-route dependency so a route
+    added later is covered by default. This asserts that stays true."""
+    public = set(main_module.PUBLIC_PATHS)
+    checked = 0
+    for route in main_module.app.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", set()) or set()
+        if not path or path in public or path.startswith("/static"):
+            continue
+        # Substitute something for path params so the URL resolves.
+        url = re.sub(r"\{[^}]+\}", "x", path)
+        method = "GET" if "GET" in methods else next(iter(methods), None)
+        if method not in ("GET", "POST"):
+            continue
+        resp = anonymous_client.request(method, url, follow_redirects=False)
+        assert resp.status_code == 303, f"{method} {url} was not gated"
+        assert resp.headers["location"] == "/login"
+        checked += 1
+    assert checked >= 5, "expected to have checked the real routes"

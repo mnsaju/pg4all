@@ -109,25 +109,32 @@ host the console runs on. Both directories are gitignored.
   (`parameters.py`, which also groups everything for the UI). No
   FastAPI imports in here.
 - `app/builder/` — writes the Dockerfile + conf to a build context
-  directory, then triggers the build.
+  directory, then triggers the build. Also owns everything under
+  `secrets/`: the build credential store and the console's own password
+  and session key.
+- Authentication is a middleware, not a per-route dependency, so a route
+  added later is protected because it exists rather than because someone
+  remembered to decorate it. `tests/test_main.py` walks the app's route
+  table and asserts every non-public route redirects an anonymous caller,
+  so that stays true.
 - The console itself runs as its own container on a VM and triggers builds
   on the **host's** Docker daemon (Docker-outside-of-Docker), by mounting
   the host's `/var/run/docker.sock` into the console container and talking
   to it via the `docker` Python SDK — no `docker` CLI binary needed inside
   the console image.
 
-  **This means the console has host-root-equivalent access**, and it has
-  no authentication of any kind: `/builds` lists every build made and
+  **This means the console has host-root-equivalent access.** It also
+  serves real secrets: `/builds` lists every build made and
   `/credentials/<build_id>` returns that build's Postgres superuser
-  password in cleartext, to anyone who can reach the port. Encrypting the
-  credential store at rest protects it from backups, screenshots and
-  accidental commits — not from the web UI handing it out.
+  password in cleartext. Encrypting the credential store at rest protects
+  it from backups, screenshots and accidental commits — not from the web
+  UI handing it out.
 
-  So the console binds to `127.0.0.1` only, and is reached over an SSH
-  tunnel, exactly like pgAdmin. The console is the more dangerous of the
-  two, so it gets at least the same treatment. Overriding that bind takes
-  a deliberate `PG4ALL_BIND=0.0.0.0`; don't, until there's an actual auth
-  story.
+  Two things guard it, and they're independent on purpose. It binds to
+  `127.0.0.1` only and is reached over an SSH tunnel, exactly like
+  pgAdmin — overriding that takes a deliberate `PG4ALL_BIND=0.0.0.0`. And
+  every route requires a session (see below), so a shell user on the host
+  or another container that can reach the port still gets nothing.
 
 ## Run locally (no Docker)
 
@@ -155,10 +162,10 @@ from another machine over an SSH tunnel:
 ssh -L 8000:127.0.0.1:8000 <host>   # then open http://localhost:8000
 ```
 
-`PG4ALL_BIND=0.0.0.0` publishes it to the network instead. That exposes
-an unauthenticated, host-root-equivalent console that serves every
-build's superuser password in cleartext — it's spelled out in full rather
-than left as a default so that it can't happen by accident.
+`PG4ALL_BIND=0.0.0.0` publishes it to the network instead. The login gate
+still applies, but this is a host-root-equivalent console — keep the
+tunnel unless you have a reason not to. It's spelled out in full rather
+than left as a default so it can't happen by accident.
 
 It also bind-mounts `build_output/`, `secrets/`, and
 `credentials/` to the host, so re-running it replaces the previous
@@ -170,6 +177,33 @@ real host path (`build_output/<build_id>/`) the operator can `cd` into.
 rather not type `PG4ALL_PORT=... docker compose up --build -d` directly.
 It prints the tunnel command, and warns loudly if you've overridden the
 bind.
+
+## Signing in
+
+Every route except `/login` and `/static` requires a session.
+
+On first run the console generates a password and prints it once, in a
+banner in its own log:
+
+```bash
+docker compose logs pg4all-console
+```
+
+Only an scrypt hash of it is stored (`secrets/console-password.json`), so
+that banner is the one time the password exists anywhere but in your
+hands — save it then. To rotate it, delete that file and restart; a new
+one is generated and printed.
+
+Sessions are a signed cookie (`HttpOnly`, `SameSite=Lax`, 12 hours),
+signed with a key in `secrets/console-session.key`. Deleting that key and
+restarting invalidates every outstanding session. The cookie is not
+`Secure`, because the console is served over plain HTTP on loopback and
+the SSH tunnel is what provides transport confidentiality; setting it
+would stop the cookie being sent at all.
+
+There is one operator and no user system — no accounts, no roles, no
+registration, no reset flow. A single-operator tool doesn't need a user
+table; it needs unauthenticated requests to get nothing.
 
 ## Tests
 
@@ -190,7 +224,12 @@ in this project could have seen it.
 
 - Native OS packages (target families: Debian, RHEL) for non-container use.
 - A second Docker base-image lineage (Red Hat UBI-based).
-- Auth/multi-tenancy on the console.
+- Multi-user accounts, roles, or an audit log on the console. It
+  authenticates a single operator (see "Signing in"); it is not a
+  multi-tenant system and isn't trying to become one.
+- Rate limiting or lockout on the login form. scrypt's cost is the
+  throttle, and the console isn't reachable from the network; a lockout on
+  a single-operator tool is mostly a way to lock out the operator.
 - Anything beyond small/medium/large hardware presets.
 - Patroni/HA clustering: it replaces how Postgres itself is started (a
   distributed consensus store, multi-node topology, dynamic config, leader
