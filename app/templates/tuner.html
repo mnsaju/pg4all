@@ -173,10 +173,40 @@
   </div>
   {% endfor %}
 
+  <h2 class="category-heading">Host ports</h2>
+  {% set pg_port = port_specs | selectattr('key', 'equalto', 'postgres') | first %}
+  <div class="param-card">
+    <div class="param-info">
+      <div class="param-name-row">
+        <span class="param-name">PostgreSQL</span>
+      </div>
+      <p class="param-desc">
+        The host port the database is published on. Change it when the host
+        already has something on 5432 — inside the stack, sidecars always
+        reach Postgres on its container port, so this only affects how you
+        connect from outside.
+      </p>
+    </div>
+    <div class="param-slider">
+      <label class="port-field">
+        <span class="port-label">host port</span>
+        <input
+          type="number"
+          class="port-input"
+          name="port_postgres"
+          min="1" max="65535" step="1"
+          value="{{ host_ports['postgres'] }}"
+        >
+        <span class="port-suffix">&rarr; {{ pg_port.container_port }} in container</span>
+      </label>
+    </div>
+  </div>
+
   <h2 class="category-heading">Companion services</h2>
   {% for svc in services %}
+  {% set port_spec = port_specs | selectattr('key', 'equalto', svc.key) | first %}
   <div class="param-card">
-    <div class="param-info" style="flex: 1 1 100%;">
+    <div class="param-info" {% if not port_spec %}style="flex: 1 1 100%;"{% endif %}>
       <label class="param-name-row" style="cursor: pointer;">
         <input
           type="checkbox"
@@ -190,6 +220,32 @@
       </label>
       <p class="param-desc">{{ svc.description }}</p>
     </div>
+    {% if port_spec %}
+    <div class="param-slider">
+      <label class="port-field">
+        <span class="port-label">host port</span>
+        <input
+          type="number"
+          class="port-input"
+          name="port_{{ svc.key }}"
+          min="1" max="65535" step="1"
+          value="{{ host_ports[svc.key] }}"
+        >
+        <span class="port-suffix">
+          {%- if port_spec.bind_address -%}
+          on {{ port_spec.bind_address }} only &rarr; {{ port_spec.container_port }}
+          {%- else -%}
+          &rarr; {{ port_spec.container_port }} in container
+          {%- endif -%}
+        </span>
+      </label>
+      {% if port_spec.bind_address %}
+      <p class="param-desc port-note">
+        The loopback bind is fixed and not configurable — only the port moves.
+      </p>
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
   {% endfor %}
 

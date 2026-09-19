@@ -256,3 +256,77 @@ def test_smoke_test_is_held_to_the_conf_not_the_unrounded_slider(client, monkeyp
     assert captured["work_mem"] == 10
     for spec in (s for s in main_module.parameters.PARAMETER_SPECS if s.kind == "memory_mb"):
         assert captured[spec.key] == int(captured[spec.key]), spec.key
+
+
+def test_tuner_page_offers_a_port_field_per_publishable_service(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    for name in ("port_postgres", "port_pgbouncer", "port_pgadmin", "port_postgres_exporter"):
+        assert f'name="{name}"' in resp.text
+    # pgBackRest is baked into the image, not a sidecar, so it publishes nothing.
+    assert 'name="port_pgbackrest"' not in resp.text
+
+
+def test_custom_ports_reach_the_generated_compose_and_instructions(client):
+    resp = _submit_build(
+        client, services=["pgbouncer", "pgadmin"],
+        port_postgres="15432", port_pgbouncer="16432", port_pgadmin="15050",
+    )
+    assert resp.status_code == 200
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+
+    compose = (main_module.BUILD_OUTPUT_DIR / build_id / "docker-compose.yml").read_text()
+    assert '"15432:5432"' in compose
+    assert '"16432:5432"' in compose
+    assert '"127.0.0.1:15050:80"' in compose
+    # The SSH tunnel instruction has to name the port actually published.
+    assert "ssh -L 15050:127.0.0.1:15050" in resp.text
+
+
+def test_a_build_without_sidecars_still_records_its_postgres_port(client):
+    """There's no compose file to read the port back out of, so the docker
+    run instruction depends on ports.json having been written."""
+    resp = _submit_build(client, port_postgres="15432")
+    assert resp.status_code == 200
+    assert "-p 15432:5432" in resp.text
+
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+    later = client.get(f"/credentials/{build_id}")
+    assert "-p 15432:5432" in later.text
+
+
+def test_duplicate_host_ports_block_the_build(client):
+    resp = _submit_build(
+        client, services=["pgbouncer"], port_postgres="5432", port_pgbouncer="5432"
+    )
+    assert resp.status_code == 422
+    assert "want host port 5432" in resp.text
+    assert "Build succeeded" not in resp.text
+
+
+def test_an_out_of_range_port_blocks_the_build(client):
+    resp = _submit_build(client, port_postgres="70000")
+    assert resp.status_code == 422
+    assert "out of range" in resp.text
+
+
+def test_a_port_conflict_warning_does_not_block_the_build(client, monkeypatch):
+    monkeypatch.setattr(
+        main_module, "published_host_ports", lambda: {5432: "some-other-stack"}
+    )
+    resp = _submit_build(client)
+    assert resp.status_code == 200
+    assert "Build succeeded" in resp.text
+    assert "already taken by some-other-stack" in resp.text
+
+
+def test_older_builds_without_ports_json_fall_back_to_defaults(client):
+    """ports.json postdates some builds; their instructions must still show
+    the ports they were actually given."""
+    resp = _submit_build(client)
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+    (main_module.BUILD_OUTPUT_DIR / build_id / "ports.json").unlink()
+
+    later = client.get(f"/credentials/{build_id}")
+    assert later.status_code == 200
+    assert "-p 5432:5432" in later.text

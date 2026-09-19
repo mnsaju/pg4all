@@ -1,4 +1,4 @@
-from app.core import services
+from app.core import ports, services
 
 
 def test_service_keys_are_unique():
@@ -35,7 +35,9 @@ def test_render_pgbackrest_conf_has_stanza_and_repo_path():
 
 def test_compose_fragment_pgbouncer_has_credentials_and_no_exporter_settings():
     spec = services.get("pgbouncer")
-    fragment = services.compose_fragment(spec, "postgres", "s3cret")
+    fragment = services.compose_fragment(
+        spec, "postgres", "s3cret", ports.get(spec.key).published(ports.get(spec.key).default)
+    )
     assert "DB_USER: postgres" in fragment
     assert "DB_PASSWORD: 's3cret'" in fragment
     assert "DATA_SOURCE_URI" not in fragment
@@ -43,7 +45,9 @@ def test_compose_fragment_pgbouncer_has_credentials_and_no_exporter_settings():
 
 def test_compose_fragment_postgres_exporter_has_credentials_and_no_pgbouncer_settings():
     spec = services.get("postgres_exporter")
-    fragment = services.compose_fragment(spec, "postgres", "s3cret")
+    fragment = services.compose_fragment(
+        spec, "postgres", "s3cret", ports.get(spec.key).published(ports.get(spec.key).default)
+    )
     assert "DATA_SOURCE_USER: postgres" in fragment
     assert "DATA_SOURCE_PASS: 's3cret'" in fragment
     assert "DB_HOST" not in fragment
@@ -56,13 +60,17 @@ def test_compose_fragment_is_not_defined_for_apt_mode_service():
 
 def test_compose_fragment_pgadmin_is_bound_to_loopback_only():
     spec = services.get("pgadmin")
-    fragment = services.compose_fragment(spec, "postgres", "s3cret")
+    fragment = services.compose_fragment(
+        spec, "postgres", "s3cret", ports.get(spec.key).published(ports.get(spec.key).default)
+    )
     assert '"127.0.0.1:5050:80"' in fragment
     assert "0.0.0.0" not in fragment
 
 
 def test_compose_fragment_pgadmin_reuses_postgres_password_as_its_own():
     spec = services.get("pgadmin")
-    fragment = services.compose_fragment(spec, "postgres", "s3cret")
+    fragment = services.compose_fragment(
+        spec, "postgres", "s3cret", ports.get(spec.key).published(ports.get(spec.key).default)
+    )
     assert f"PGADMIN_DEFAULT_EMAIL: {services.PGADMIN_EMAIL}" in fragment
     assert "PGADMIN_DEFAULT_PASSWORD: 's3cret'" in fragment

@@ -1,8 +1,11 @@
 {# Included after _credentials.html in result.html and credential.html.
    Expects `credential` (for build_id) plus `has_compose`/`has_pgbackrest`/
-   `has_pgadmin`/`pgadmin_email` — computed by checking build_output/<build_id>/
-   on disk, not stored on the credential record, since the build artifacts
-   themselves are just as durable as the encrypted credential store. #}
+   `has_pgadmin`/`pgadmin_email`/`host_ports` — computed by checking
+   build_output/<build_id>/ on disk, not stored on the credential record,
+   since the build artifacts themselves are just as durable as the encrypted
+   credential store. `host_ports` comes from the build's ports.json, so a
+   build made before ports were configurable still shows the defaults it
+   was actually given. #}
 {% if has_compose %}
 <p class="field-hint">
   Companion services were included in this build. Start Postgres and all of
@@ -14,19 +17,20 @@ docker compose up -d</div>
 
 {% if has_pgadmin %}
 <p class="field-hint">
-  pgAdmin is bound to <code>127.0.0.1</code> only on port 5050 — it is never
-  published to the network, so reach it over an SSH tunnel to the host, not
-  directly:
+  pgAdmin is bound to <code>127.0.0.1</code> only on port
+  {{ host_ports['pgadmin'] }} — it is never published to the network, so
+  reach it over an SSH tunnel to the host, not directly:
 </p>
-<div class="log-panel">ssh -L 5050:127.0.0.1:5050 &lt;host&gt;
-# then open http://localhost:5050
+<div class="log-panel">ssh -L {{ host_ports['pgadmin'] }}:127.0.0.1:{{ host_ports['pgadmin'] }} &lt;host&gt;
+# then open http://localhost:{{ host_ports['pgadmin'] }}
 
 pgAdmin login: {{ pgadmin_email }}
 pgAdmin password: (same as the superuser password above)</div>
 <p class="field-hint">
   Add the Postgres connection yourself the first time you open it — host
-  <code>postgres</code>, port 5432, same username/password. pg4all doesn't
-  pre-seed it.
+  <code>postgres</code>, port 5432, same username/password. That's the
+  container-side port on the compose network, which doesn't change when you
+  move the published host port. pg4all doesn't pre-seed it.
 </p>
 {% endif %}
 

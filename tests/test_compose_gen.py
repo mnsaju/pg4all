@@ -52,3 +52,27 @@ def test_pgbouncer_publishes_to_the_port_it_actually_listens_on():
     )
     assert '"6432:5432"' in text
     assert '"6432:6432"' not in text
+
+
+def test_custom_host_ports_appear_in_the_generated_compose():
+    text = compose_gen.render_compose(
+        "pg4all/postgres:17-oltp-medium", "postgres", "secret",
+        services.resolve(["pgbouncer", "pgadmin", "postgres_exporter"]),
+        host_ports={
+            "postgres": 15432, "pgbouncer": 16432,
+            "postgres_exporter": 19187, "pgadmin": 15050,
+        },
+    )
+    assert '"15432:5432"' in text      # postgres
+    assert '"16432:5432"' in text      # pgbouncer listens on 5432 inside
+    assert '"19187:9187"' in text      # exporter
+    assert '"127.0.0.1:15050:80"' in text  # pgadmin stays loopback-bound
+
+
+def test_omitting_host_ports_keeps_the_conventional_defaults():
+    text = compose_gen.render_compose(
+        "pg4all/postgres:17-oltp-medium", "postgres", "secret",
+        services.resolve(["pgbouncer"]),
+    )
+    assert '"5432:5432"' in text
+    assert '"6432:5432"' in text

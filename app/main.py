@@ -8,12 +8,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from app.builder import compose_gen, credential_store
+from app.builder import compose_gen, credential_store, port_store
+from app.builder.host_ports import published_host_ports
 from app.builder.dockerfile_gen import BUILD_OUTPUT_DIR, create_build_context
 from app.builder.docker_build import build_image
 from app.builder.smoke_test import run_smoke_test
 from app.core import (
-    credentials, extensions, hardware, parameters, pg_versions, services, validation, workloads,
+    credentials, extensions, hardware, parameters, pg_versions, ports, services, validation,
+    workloads,
 )
 from app.core.conf_generator import render_conf
 
@@ -54,6 +56,7 @@ def _build_dir_flags(build_dir: Path) -> dict:
         "has_pgbackrest": (build_dir / "pgbackrest.conf").exists(),
         "has_pgadmin": "pgadmin:" in compose_text,
         "pgadmin_email": services.PGADMIN_EMAIL,
+        "host_ports": port_store.read_ports(build_dir),
     }
 
 
@@ -106,6 +109,20 @@ def _submitted_values(form, wl, hw_tier) -> dict[str, float | str]:
     return values
 
 
+def _submitted_ports(form) -> dict[str, int]:
+    return ports.resolve(
+        {spec.key: form.get(f"port_{spec.key}") for spec in ports.PORT_SPECS}
+    )
+
+
+def _all_findings(values, hw_tier, service_keys, host_ports) -> list:
+    """Everything wrong with a submission, tuning and ports together, so
+    the tuner panel and the /build gate always see the same list."""
+    return validation.validate(values, hw_tier, service_keys) + ports.validate(
+        host_ports, service_keys, published_host_ports()
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, pg_version: str | None = None, workload: str | None = None, tier: str | None = None):
     version, wl, hw_tier = _resolve_selection(pg_version, workload, tier)
@@ -133,7 +150,9 @@ def index(request: Request, pg_version: str | None = None, workload: str | None 
             "selected_extension_keys": default_extension_keys,
             "services": services.list_services(),
             "selected_service_keys": default_service_keys,
-            "findings": validation.validate(
+            "port_specs": ports.PORT_SPECS,
+            "host_ports": ports.defaults(),
+            "findings": _all_findings(
                 {
                     row.spec.key: row.recommended_value
                     for group in groups
@@ -141,6 +160,7 @@ def index(request: Request, pg_version: str | None = None, workload: str | None 
                 },
                 hw_tier,
                 frozenset(default_service_keys),
+                ports.defaults(),
             ),
         },
     )
@@ -158,10 +178,11 @@ async def validate_settings(request: Request):
     _version, wl, hw_tier = _resolve_selection(
         form.get("pg_version"), form.get("workload"), form.get("tier")
     )
-    findings = validation.validate(
+    findings = _all_findings(
         _submitted_values(form, wl, hw_tier),
         hw_tier,
         frozenset(form.getlist("services")),
+        _submitted_ports(form),
     )
     return templates.TemplateResponse(
         request, "_findings.html", {"findings": findings}
@@ -176,8 +197,9 @@ async def build(request: Request):
         form.get("pg_version"), form.get("workload"), form.get("tier")
     )
     values = _submitted_values(form, wl, hw_tier)
-    findings = validation.validate(
-        values, hw_tier, frozenset(form.getlist("services"))
+    host_ports = _submitted_ports(form)
+    findings = _all_findings(
+        values, hw_tier, frozenset(form.getlist("services")), host_ports
     )
 
     # An error-level finding describes a configuration that will start and
@@ -253,6 +275,8 @@ async def build(request: Request):
         await run_in_threadpool(run_smoke_test, tag, conf_values) if result.ok else None
     )
 
+    port_store.write_ports(context_dir, host_ports)
+
     password = credentials.generate_password()
     record = credentials.CredentialRecord(
         build_id=build_id,
@@ -266,7 +290,9 @@ async def build(request: Request):
     credential_store.save_credential(record)
 
     if result.ok:
-        compose_gen.write_compose(context_dir, tag, record.username, password, selected_services)
+        compose_gen.write_compose(
+            context_dir, tag, record.username, password, selected_services, host_ports
+        )
 
     return templates.TemplateResponse(
         request,

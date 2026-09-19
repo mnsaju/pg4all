@@ -12,6 +12,7 @@ has already pushed that image into the host daemon's store via the SDK.
 
 from pathlib import Path
 
+from app.core import ports
 from app.core.services import ServiceSpec, compose_fragment
 
 _POSTGRES_SERVICE_TEMPLATE = """\
@@ -21,7 +22,7 @@ services:
     environment:
       POSTGRES_PASSWORD: '{password}'
     ports:
-      - "5432:5432"
+      - "{published}"
     restart: unless-stopped
 """
 
@@ -31,14 +32,28 @@ def render_compose(
     username: str,
     password: str,
     selected_services: list[ServiceSpec],
+    host_ports: dict[str, int] | None = None,
 ) -> str | None:
+    """`host_ports` maps a port key from app/core/ports.py to its host-side
+    port. Omitted, every service takes its default — which is what the
+    generated stack did before any of this was configurable."""
     sidecars = [s for s in selected_services if s.mode == "sidecar"]
     if not sidecars:
         return None
 
-    text = _POSTGRES_SERVICE_TEMPLATE.format(image_tag=image_tag, password=password)
+    host_ports = {**ports.defaults(), **(host_ports or {})}
+
+    postgres_spec = ports.get(ports.POSTGRES_PORT_KEY)
+    text = _POSTGRES_SERVICE_TEMPLATE.format(
+        image_tag=image_tag,
+        password=password,
+        published=postgres_spec.published(host_ports[ports.POSTGRES_PORT_KEY]),
+    )
     for spec in sidecars:
-        text += "\n" + compose_fragment(spec, username, password)
+        port_spec = ports.get(spec.key)
+        text += "\n" + compose_fragment(
+            spec, username, password, port_spec.published(host_ports[spec.key])
+        )
     return text
 
 
@@ -48,8 +63,11 @@ def write_compose(
     username: str,
     password: str,
     selected_services: list[ServiceSpec],
+    host_ports: dict[str, int] | None = None,
 ) -> Path | None:
-    text = render_compose(image_tag, username, password, selected_services)
+    text = render_compose(
+        image_tag, username, password, selected_services, host_ports
+    )
     if text is None:
         return None
 

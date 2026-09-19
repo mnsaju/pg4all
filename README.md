@@ -45,6 +45,17 @@ with the resulting `postgresql.conf` baked in.
   warn in two places, by design — the data-warehouse profile runs close to
   the memory line because its `work_mem` formula is meant to, and the OLTP
   profile's 300 connections are exactly what the pooler advice is for.
+- Choose the host ports the generated stack publishes (`app/core/ports.py`).
+  Every published port used to be hardcoded, which works right up until the
+  host already has something on 5432 — the one port a machine doing
+  PostgreSQL work is most likely to have taken. Only the host side is
+  configurable: container ports are fixed properties of the images, and the
+  sidecars reach Postgres over the compose network on 5432 regardless. A
+  port that's out of range or claimed twice in the same stack blocks the
+  build; one already held by a running container is only a warning, since
+  the image builds fine and you may be about to stop whatever holds it.
+  pgAdmin's port can move but its `127.0.0.1` bind cannot — putting the
+  admin UI on the network should take more than editing a number.
 - Build the resulting Docker image on demand, with your final values.
 - Smoke-test the image right after it builds (`app/builder/smoke_test.py`).
   A successful `docker build` only proves the image assembled; PostgreSQL
