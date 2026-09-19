@@ -30,11 +30,20 @@ with the resulting `postgresql.conf` baked in.
   and would have accepted anything — they were a restriction on the input,
   which meant a 12-core, 48 GB server had to pretend to be "large (8/32)"
   and got `shared_buffers` of 8 GB instead of 12. Together
-  these compute a recommended value for each of 17 tunable parameters,
+  these compute a recommended value for each of 21 tunable parameters,
   grouped into Memory / Connections / Query / WAL / Durability / Logging /
   Autovacuum — a set cross-checked against several independent PostgreSQL
   tuning guides (PGTune, the PostgreSQL Wiki, Percona, Mydbops) rather
-  than picked arbitrarily.
+  than picked arbitrarily. That set is checked against PGTune's own output
+  by a test, because it turned out not to be: pg4all tuned seventeen
+  parameters and PGTune emitted seventeen, but five of PGTune's had been
+  swapped for five of pg4all's own without anyone noticing the drop. The
+  worst of the missing ones was `max_parallel_workers`, which defaults to 8
+  and is the cluster-wide ceiling on parallel query workers — so a 32-core
+  data warehouse was told to use 16 workers per Gather and could never be
+  given more than 8, with `max_worker_processes` at 32 making it look fine.
+  `huge_pages` is the one deliberate omission: PostgreSQL already defaults
+  it to `try`.
 - Each parameter is shown against PostgreSQL's real stock default (not a
   live "current" value — pg4all doesn't connect to a running database),
   with an advisory impact score, risk level, and whether changing it

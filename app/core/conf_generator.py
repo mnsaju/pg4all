@@ -47,6 +47,21 @@ def _max_wal_size(ram_gb: int) -> str:
     gb = max(_MAX_WAL_SIZE_MIN_GB, min(_MAX_WAL_SIZE_MAX_GB, ram_gb // 4))
     return f"{gb}GB"
 
+
+def _min_wal_size(ram_gb: int) -> str:
+    """A quarter of max_wal_size, so WAL segments get recycled.
+
+    PostgreSQL's stock 80MB means that on any tuned machine the server
+    deletes and recreates segments continuously instead of reusing them.
+    Keeping a floor proportional to the ceiling lets it recycle.
+    """
+    max_gb = max(_MAX_WAL_SIZE_MIN_GB, min(_MAX_WAL_SIZE_MAX_GB, ram_gb // 4))
+    return f"{max(256, max_gb * 1024 // 4)}MB"
+
+# A data warehouse plans few, large queries, where more sampling is cheap
+# relative to getting the plan wrong. Everything else keeps the stock 100.
+_STATISTICS_TARGET_BY_WORKLOAD = {"dw": 500}
+
 _LOG_MIN_DURATION_MS_BY_WORKLOAD = {
     "web": 1000,
     "oltp": 1000,
@@ -106,8 +121,26 @@ def generate_conf(workload: Workload, hardware: HardwareTier) -> dict[str, str]:
         "random_page_cost": str(storage_costs["random_page_cost"]),
         "effective_io_concurrency": str(storage_costs["effective_io_concurrency"]),
         "max_worker_processes": str(hardware.vcpu),
+        # max_parallel_workers is the cluster-wide ceiling on how many of
+        # max_worker_processes may serve parallel queries. Leaving it unset
+        # meant PostgreSQL's default of 8 silently capped every machine with
+        # more than eight cores, however high the other two were set — a
+        # 32-core data warehouse asked for 16 workers per Gather and could
+        # never be given more than 8.
+        "max_parallel_workers": str(hardware.vcpu),
         "max_parallel_workers_per_gather": str(max(hardware.vcpu // 2, 1)),
+        # Parallel CREATE INDEX and VACUUM. Its stock value is 2 regardless
+        # of machine size; half the cores, capped, keeps index builds from
+        # being the slowest thing on a large box without letting one
+        # maintenance operation take it over.
+        "max_parallel_maintenance_workers": str(
+            min(max(hardware.vcpu // 2, 1), 4)
+        ),
         "max_wal_size": _max_wal_size(hardware.ram_gb),
+        "min_wal_size": _min_wal_size(hardware.ram_gb),
+        "default_statistics_target": str(
+            _STATISTICS_TARGET_BY_WORKLOAD.get(workload.key, 100)
+        ),
         "log_min_duration_statement": str(
             _LOG_MIN_DURATION_MS_BY_WORKLOAD.get(workload.key, 1000)
         ),

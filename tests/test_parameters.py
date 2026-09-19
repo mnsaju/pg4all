@@ -16,8 +16,39 @@ _NO_RESTART_KEYS = {
 }
 
 
-def test_total_parameter_count_is_seventeen():
-    assert len(parameters.PARAMETER_SPECS) == 17
+def test_every_parameter_pgtune_emits_is_covered():
+    """pg4all once tuned seventeen parameters and PGTune emitted seventeen
+    — but not the same seventeen. Five of PGTune's had been swapped for
+    five of pg4all's own, and the drop went unnoticed until
+    max_parallel_workers turned out to be silently capping every machine
+    with more than eight cores.
+
+    huge_pages is the one deliberate omission: PostgreSQL already defaults
+    it to "try", so emitting it changes nothing.
+    """
+    covered = {spec.key for spec in parameters.PARAMETER_SPECS}
+    pgtune_emits = {
+        "max_connections", "shared_buffers", "effective_cache_size",
+        "maintenance_work_mem", "checkpoint_completion_target", "wal_buffers",
+        "default_statistics_target", "random_page_cost",
+        "effective_io_concurrency", "work_mem", "min_wal_size", "max_wal_size",
+        "max_worker_processes", "max_parallel_workers_per_gather",
+        "max_parallel_workers", "max_parallel_maintenance_workers",
+    }
+    assert not (pgtune_emits - covered), sorted(pgtune_emits - covered)
+
+
+def test_the_parallelism_chain_is_complete():
+    """Three settings form a chain and all three have to be set: leaving
+    max_parallel_workers out let PostgreSQL's default of 8 override both
+    the others without saying so."""
+    covered = {spec.key for spec in parameters.PARAMETER_SPECS}
+    assert {
+        "max_worker_processes",
+        "max_parallel_workers",
+        "max_parallel_workers_per_gather",
+        "max_parallel_maintenance_workers",
+    } <= covered
 
 
 def test_categories_match_expected_seven_groups():

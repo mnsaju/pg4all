@@ -8,6 +8,10 @@ real stock default is the honest choice rather than inventing one.
 """
 
 DEFAULTS: dict[str, str] = {
+    "max_parallel_workers": "8",
+    "max_parallel_maintenance_workers": "2",
+    "min_wal_size": "80MB",
+    "default_statistics_target": "100",
     "shared_buffers": "128MB",
     "effective_cache_size": "4GB",
     "work_mem": "4MB",

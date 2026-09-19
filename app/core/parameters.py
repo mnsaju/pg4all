@@ -97,6 +97,30 @@ PARAMETER_SPECS: list[ParameterSpec] = [
         min_value=4, max_value=64, step=1, kind="int",
     ),
     ParameterSpec(
+        "max_parallel_workers", "connections",
+        "Cluster-wide ceiling on how many background workers may serve "
+        "parallel queries. Drawn from max_worker_processes, and the real "
+        "limit on parallelism — no Gather node can exceed it however high "
+        "max_parallel_workers_per_gather is set.",
+        impact=66, risk="low", restart_required=False,
+        min_value=0, max_value=64, step=1, kind="int",
+    ),
+    ParameterSpec(
+        "max_parallel_maintenance_workers", "query",
+        "Workers a single maintenance operation may use — parallel CREATE "
+        "INDEX and VACUUM. Stock value is 2 whatever the machine.",
+        impact=42, risk="low", restart_required=False,
+        min_value=0, max_value=16, step=1, kind="int",
+    ),
+    ParameterSpec(
+        "default_statistics_target", "query",
+        "How many samples ANALYZE collects per column. Higher gives the "
+        "planner better estimates on skewed data at the cost of slower "
+        "ANALYZE and larger statistics.",
+        impact=50, risk="low", restart_required=False,
+        min_value=10, max_value=1000, step=10, kind="int",
+    ),
+    ParameterSpec(
         "max_parallel_workers_per_gather", "query",
         "Maximum workers a single Gather/GatherMerge node may use. More "
         "workers can speed up large scans.",
@@ -137,6 +161,14 @@ PARAMETER_SPECS: list[ParameterSpec] = [
         "reduce checkpoint frequency at the cost of longer recovery.",
         impact=62, risk="low", restart_required=False,
         min_value=256, max_value=16384, step=256, kind="memory_mb", unit="MB",
+    ),
+    ParameterSpec(
+        "min_wal_size", "wal",
+        "WAL kept on hand for reuse. PostgreSQL's stock 80MB means a tuned "
+        "server deletes and recreates segments continuously instead of "
+        "recycling them.",
+        impact=45, risk="low", restart_required=False,
+        min_value=32, max_value=8192, step=32, kind="memory_mb", unit="MB",
     ),
     ParameterSpec(
         "checkpoint_timeout", "wal",

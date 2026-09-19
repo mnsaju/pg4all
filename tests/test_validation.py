@@ -126,15 +126,55 @@ def test_effective_cache_size_above_ram_warns():
     assert "exceeds the tier's RAM" in summaries(findings)
 
 
-def test_parallel_workers_above_the_worker_pool_warns():
+def test_a_gather_asking_for_more_than_the_cluster_ceiling_warns():
+    """The bug this rule missed for a while: it compared per_gather against
+    max_worker_processes, the outer limit, so a 32-core machine asking for
+    16 per Gather passed cleanly while max_parallel_workers sat at 8."""
     tier = hardware.get("medium")
     values = recommended_values("oltp", "medium")
-    values["max_worker_processes"] = 4
-    values["max_parallel_workers_per_gather"] = 8
+    values["max_worker_processes"] = 32
+    values["max_parallel_workers"] = 8
+    values["max_parallel_workers_per_gather"] = 16
 
     findings = validation.validate(values, tier)
 
-    assert "above max_worker_processes" in summaries(findings)
+    assert "above max_parallel_workers" in summaries(findings)
+
+
+def test_more_parallel_workers_than_the_pool_warns():
+    tier = hardware.get("medium")
+    values = recommended_values("oltp", "medium")
+    values["max_worker_processes"] = 4
+    values["max_parallel_workers"] = 16
+    values["max_parallel_workers_per_gather"] = 2
+
+    findings = validation.validate(values, tier)
+
+    assert "max_parallel_workers is above max_worker_processes" in summaries(findings)
+
+
+def test_maintenance_workers_above_the_ceiling_warns():
+    tier = hardware.get("medium")
+    values = recommended_values("oltp", "medium")
+    values["max_parallel_workers"] = 4
+    values["max_parallel_maintenance_workers"] = 8
+
+    findings = validation.validate(values, tier)
+
+    assert "max_parallel_maintenance_workers is above" in summaries(findings)
+
+
+def test_a_consistent_parallelism_chain_is_quiet():
+    tier = hardware.get("medium")
+    values = recommended_values("oltp", "medium")
+    values["max_worker_processes"] = 16
+    values["max_parallel_workers"] = 16
+    values["max_parallel_workers_per_gather"] = 8
+    values["max_parallel_maintenance_workers"] = 4
+
+    findings = validation.validate(values, tier)
+
+    assert "parallel" not in summaries(findings).lower()
 
 
 def test_many_connections_without_pgbouncer_warns():

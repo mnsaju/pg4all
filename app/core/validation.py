@@ -207,25 +207,78 @@ def _check_effective_cache_size(
 def _check_parallel_workers(
     values: dict[str, float | str], tier: HardwareTier
 ) -> list[Finding]:
+    """The parallelism settings form a chain, and only the innermost link
+    actually limits a query.
+
+    Workers for a Gather node come out of max_parallel_workers, which in
+    turn comes out of max_worker_processes. This rule used to compare
+    per_gather against max_worker_processes — the *outer* limit — and so
+    passed cleanly on a 32-core machine asking for 16 workers per Gather
+    while max_parallel_workers sat at PostgreSQL's default of 8 and capped
+    it at half that. A check that reports nothing wrong about the exact
+    thing that is wrong is worse than no check.
+    """
     per_gather = _mb(values, "max_parallel_workers_per_gather")
-    max_workers = _mb(values, "max_worker_processes")
-    if per_gather <= max_workers:
-        return []
-    return [
-        Finding(
-            level=WARNING,
-            parameter_keys=("max_parallel_workers_per_gather", "max_worker_processes"),
-            summary=(
-                "max_parallel_workers_per_gather is above max_worker_processes"
-            ),
-            detail=(
-                f"{per_gather:.0f} requested per Gather node, but only "
-                f"{max_workers:.0f} background worker processes exist in total. "
-                "Parallel workers are drawn from that pool, so the excess is "
-                "silently never granted — the plan asks for workers it cannot get."
-            ),
+    parallel_total = _mb(values, "max_parallel_workers")
+    worker_processes = _mb(values, "max_worker_processes")
+    maintenance = _mb(values, "max_parallel_maintenance_workers")
+    findings = []
+
+    if per_gather > parallel_total:
+        findings.append(
+            Finding(
+                level=WARNING,
+                parameter_keys=(
+                    "max_parallel_workers_per_gather", "max_parallel_workers",
+                ),
+                summary=(
+                    "max_parallel_workers_per_gather is above "
+                    "max_parallel_workers"
+                ),
+                detail=(
+                    f"{per_gather:.0f} requested per Gather node, but "
+                    f"{parallel_total:.0f} is the cluster-wide ceiling for "
+                    "parallel workers. The excess is silently never granted, "
+                    "so plans ask for workers that cannot exist."
+                ),
+            )
         )
-    ]
+
+    if parallel_total > worker_processes:
+        findings.append(
+            Finding(
+                level=WARNING,
+                parameter_keys=("max_parallel_workers", "max_worker_processes"),
+                summary="max_parallel_workers is above max_worker_processes",
+                detail=(
+                    f"{parallel_total:.0f} parallel workers allowed from a pool "
+                    f"of {worker_processes:.0f} background worker processes. "
+                    "Parallel workers are drawn from that pool, so the excess "
+                    "cannot be granted."
+                ),
+            )
+        )
+
+    if maintenance > parallel_total:
+        findings.append(
+            Finding(
+                level=WARNING,
+                parameter_keys=(
+                    "max_parallel_maintenance_workers", "max_parallel_workers",
+                ),
+                summary=(
+                    "max_parallel_maintenance_workers is above "
+                    "max_parallel_workers"
+                ),
+                detail=(
+                    f"A CREATE INDEX may ask for {maintenance:.0f} workers "
+                    f"while {parallel_total:.0f} is the cluster-wide ceiling. "
+                    "The excess is never granted."
+                ),
+            )
+        )
+
+    return findings
 
 
 def _check_connection_pooling(
