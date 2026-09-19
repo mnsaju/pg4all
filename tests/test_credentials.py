@@ -64,3 +64,19 @@ def test_key_is_generated_once_and_reused(isolated_store):
     first = credential_store._load_or_create_key()
     second = credential_store._load_or_create_key()
     assert first == second
+
+
+def test_list_credentials_empty_when_nothing_stored(isolated_store):
+    assert credential_store.list_credentials() == []
+
+
+def test_list_credentials_returns_most_recent_first(isolated_store):
+    older = _sample_record(build_id="older")
+    older = credentials.CredentialRecord(**{**older.__dict__, "created_at": "2026-09-01T00:00:00+00:00"})
+    newer = _sample_record(build_id="newer")
+    newer = credentials.CredentialRecord(**{**newer.__dict__, "created_at": "2026-09-16T00:00:00+00:00"})
+
+    credential_store.save_credential(older)
+    credential_store.save_credential(newer)
+
+    assert [r.build_id for r in credential_store.list_credentials()] == ["newer", "older"]

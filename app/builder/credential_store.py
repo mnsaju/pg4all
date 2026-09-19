@@ -51,3 +51,26 @@ def load_credential(build_id: str) -> CredentialRecord | None:
     except InvalidToken:
         return None
     return from_json(plaintext.decode())
+
+
+def list_credentials() -> list[CredentialRecord]:
+    """All stored build records, most recent first.
+
+    Decrypts every file to read its `created_at` — fine at the build
+    volumes a single trusted operator produces, but would need an
+    unencrypted index if that volume ever grew.
+    """
+    if not CREDENTIALS_DIR.exists():
+        return []
+
+    fernet = Fernet(_load_or_create_key())
+    records = []
+    for path in CREDENTIALS_DIR.glob("*.enc"):
+        try:
+            plaintext = fernet.decrypt(path.read_bytes())
+        except InvalidToken:
+            continue
+        records.append(from_json(plaintext.decode()))
+
+    records.sort(key=lambda r: r.created_at, reverse=True)
+    return records

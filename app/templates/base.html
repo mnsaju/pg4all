@@ -17,7 +17,8 @@
       <div class="nav-group">
         <span class="nav-group-label">Build</span>
         <nav class="nav">
-          <a class="nav-item is-active" href="/">Config Tuner</a>
+          <a class="nav-item {{ 'is-active' if request.url.path == '/' }}" href="/">Config Tuner</a>
+          <a class="nav-item {{ 'is-active' if request.url.path == '/builds' }}" href="/builds">Builds</a>
         </nav>
       </div>
 

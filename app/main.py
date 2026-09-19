@@ -140,6 +140,12 @@ async def build(request: Request):
     )
 
 
+@app.get("/builds", response_class=HTMLResponse)
+def list_builds(request: Request):
+    records = credential_store.list_credentials()
+    return templates.TemplateResponse(request, "builds.html", {"records": records})
+
+
 @app.get("/credentials/{build_id}", response_class=HTMLResponse)
 def show_credential(request: Request, build_id: str):
     record = credential_store.load_credential(build_id)

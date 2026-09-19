@@ -403,6 +403,34 @@ code {
 
 .field-hint { color: var(--text-muted); font-size: 0.85rem; margin: -0.25rem 0 1rem; }
 
+/* Builds list */
+
+.builds-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.builds-table th, .builds-table td {
+  text-align: left;
+  padding: 0.7rem 1rem;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.builds-table th {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+
+.builds-table tbody tr:last-child td { border-bottom: none; }
+
 /* Build result */
 
 .status-banner {

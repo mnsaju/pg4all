@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block page_title %}Builds{% endblock %}
+{% block page_subtitle %}Every image built so far, most recent first. Credentials are shown only on request.{% endblock %}
+{% block content %}
+{% if records %}
+<table class="builds-table">
+  <thead>
+    <tr>
+      <th>Built</th>
+      <th>Image tag</th>
+      <th>PG version</th>
+      <th>Status</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for record in records %}
+    <tr>
+      <td>{{ record.created_at }}</td>
+      <td><code>{{ record.image_tag }}</code></td>
+      <td>{{ record.pg_major }}</td>
+      <td>
+        <span class="badge {{ 'badge-risk-low' if record.build_ok else 'badge-risk-high' }}">
+          {{ 'ok' if record.build_ok else 'failed' }}
+        </span>
+      </td>
+      <td><a href="/credentials/{{ record.build_id }}" class="btn-link">credentials &rarr;</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="field-hint">No builds yet — start one from the Config Tuner.</p>
+{% endif %}
+
+<a href="/" class="btn-link">&larr; back to Config Tuner</a>
+{% endblock %}
