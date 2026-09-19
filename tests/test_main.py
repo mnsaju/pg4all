@@ -75,7 +75,7 @@ def anonymous_client(tmp_path, monkeypatch):
     monkeypatch.setattr(
         main_module,
         "run_smoke_test",
-        lambda tag, requested: SmokeResult(
+        lambda tag, requested, initdb=None: SmokeResult(
             status=smoke_test.PASSED,
             summary="PostgreSQL started and all tuned settings took effect.",
             log=["Started test container."],
@@ -249,7 +249,7 @@ def test_a_failing_smoke_test_does_not_invalidate_the_build(client, monkeypatch)
     monkeypatch.setattr(
         main_module,
         "run_smoke_test",
-        lambda tag, requested: SmokeResult(
+        lambda tag, requested, initdb=None: SmokeResult(
             status=smoke_test.FAILED,
             summary="PostgreSQL did not start with this configuration.",
             log=["FATAL: could not start"],
@@ -269,7 +269,7 @@ def test_smoke_test_is_skipped_when_the_build_fails(client, monkeypatch):
         _fake_build_image(ok=False),
     )
 
-    def _fail(tag, requested):
+    def _fail(tag, requested, initdb=None):
         raise AssertionError("smoke test must not run against an image that failed to build")
 
     monkeypatch.setattr(main_module, "run_smoke_test", _fail)
@@ -287,7 +287,7 @@ def test_smoke_test_is_held_to_the_conf_not_the_unrounded_slider(client, monkeyp
     writes work_mem = 10MB from a recommendation of 10.24 MB)."""
     captured = {}
 
-    def _capture(tag, requested):
+    def _capture(tag, requested, initdb=None):
         captured.update(requested)
         return SmokeResult(status=smoke_test.PASSED, summary="ok")
 
@@ -554,7 +554,7 @@ def test_a_running_build_reports_itself_as_running(client, monkeypatch, tmp_path
 def test_a_failed_build_is_reported_without_a_smoke_test(client, monkeypatch):
     monkeypatch.setattr(main_module, "build_image", _fake_build_image(ok=False))
 
-    def _fail(tag, requested):
+    def _fail(tag, requested, initdb=None):
         raise AssertionError("smoke test must not run against a failed build")
 
     monkeypatch.setattr(main_module, "run_smoke_test", _fail)
@@ -1004,3 +1004,55 @@ def test_sizing_nonsense_does_not_break_the_page(client):
     for query in ("data_gb=abc&concurrent_queries=5", "data_gb=-1&concurrent_queries=0"):
         resp = client.get(f"/?workload=oltp&{query}")
         assert resp.status_code == 200, query
+
+
+# --- initdb-time options -----------------------------------------------
+
+def test_checksums_are_on_by_default_in_the_generated_dockerfile(client):
+    """PostgreSQL leaves them off below 18, so a 17 image built without
+    asking has no corruption detection at all."""
+    resp = _submit_build(client)
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+    dockerfile = (main_module.BUILD_OUTPUT_DIR / build_id / "Dockerfile").read_text()
+    assert 'ENV POSTGRES_INITDB_ARGS="--data-checksums"' in dockerfile
+
+
+def test_initdb_choices_reach_the_dockerfile(client):
+    resp = _submit_build(
+        client, initdb_wal_segment_mb="64", initdb_collation="C"
+    )
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+    dockerfile = (main_module.BUILD_OUTPUT_DIR / build_id / "Dockerfile").read_text()
+
+    assert "--wal-segsize=64" in dockerfile
+    assert "--locale=C" in dockerfile
+    assert "--encoding=UTF8" in dockerfile  # never --locale=C on its own
+
+
+def test_turning_checksums_off_emits_nothing_on_pg17(client):
+    resp = _submit_build(client, initdb_checksums="0")
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+    dockerfile = (main_module.BUILD_OUTPUT_DIR / build_id / "Dockerfile").read_text()
+    assert "POSTGRES_INITDB_ARGS" not in dockerfile
+
+
+def test_the_smoke_test_is_told_what_initdb_should_have_produced(client, monkeypatch):
+    """A wrong initdb setting cannot be fixed later, so the one moment it
+    can still be caught is worth using."""
+    seen = {}
+    monkeypatch.setattr(
+        main_module, "run_smoke_test",
+        lambda tag, requested, initdb=None: seen.update(initdb or {})
+        or SmokeResult(status=smoke_test.PASSED, summary="ok"),
+    )
+    _submit_build(client, initdb_wal_segment_mb="64")
+
+    assert seen["data_checksums"] == "on"
+    assert seen["wal_segment_size"] == str(64 * 1024 * 1024)
+
+
+def test_the_tuner_explains_that_these_cannot_be_changed_later(client):
+    resp = client.get("/")
+    assert "Cluster creation" in resp.text
+    assert "unchangeable afterwards" in resp.text
+    assert 'name="initdb_checksums"' in resp.text

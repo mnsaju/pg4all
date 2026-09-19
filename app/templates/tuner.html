@@ -246,6 +246,76 @@
   </div>
   {% endfor %}
 
+  <h2 class="category-heading">Cluster creation</h2>
+  <p class="field-hint">
+    Fixed by <code>initdb</code> when the data directory is first written and
+    <strong>unchangeable afterwards</strong> — unlike everything above, these
+    cannot be corrected by editing a conf and restarting. Changing one later
+    means a dump and reload.
+  </p>
+
+  <div class="param-card">
+    <div class="param-info" style="flex: 1 1 100%;">
+      <label class="param-name-row" style="cursor: pointer;">
+        <input type="checkbox" name="initdb_checksums" value="1" checked>
+        <span class="param-name">Data page checksums</span>
+        <span class="badge badge-risk-low">recommended</span>
+      </label>
+      <p class="param-desc">
+        Detects silent on-disk corruption by checksumming every page.
+        PostgreSQL turns this on by default from {{ checksums_default_on_from }}
+        onward but leaves it off below that, so a PostgreSQL 16 or 17 image
+        has no corruption detection unless it is asked for here. Costs a few
+        percent of write throughput. Enabling it later needs
+        <code>pg_checksums</code> with the cluster stopped.
+      </p>
+    </div>
+  </div>
+
+  <div class="param-card">
+    <div class="param-info">
+      <div class="param-name-row"><span class="param-name">WAL segment size</span></div>
+      <p class="param-desc">
+        Size of each WAL file. Larger segments mean fewer files to create and
+        recycle, which helps at sustained high write rates and does nothing
+        otherwise.
+      </p>
+    </div>
+    <div class="param-slider">
+      <label class="port-field">
+        <select class="port-input" name="initdb_wal_segment_mb">
+          {% for mb in initdb_wal_choices %}
+          <option value="{{ mb }}" {% if mb == initdb_defaults.wal_segment_mb %}selected{% endif %}>
+            {{ mb }} MB{% if mb == initdb_defaults.wal_segment_mb %} (default){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="param-card">
+    <div class="param-info">
+      <div class="param-name-row"><span class="param-name">Collation</span></div>
+      <p class="param-desc">
+        <code>C</code> compares text byte by byte, which is materially faster
+        than locale-aware comparison and changes <code>ORDER BY</code>
+        semantics on text — a tradeoff, not a free win. pg4all pairs it with
+        an explicit UTF-8 encoding, because <code>--locale=C</code> on its own
+        silently resolves the encoding to <code>SQL_ASCII</code> and turns off
+        encoding validation entirely.
+      </p>
+    </div>
+    <div class="param-slider">
+      <label class="port-field">
+        <select class="port-input" name="initdb_collation">
+          <option value="default">Locale-aware (en_US.UTF-8)</option>
+          <option value="C">C — byte order, UTF-8</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
   <h2 class="category-heading">Host ports</h2>
   {% set pg_port = port_specs | selectattr('key', 'equalto', 'postgres') | first %}
   <div class="param-card">

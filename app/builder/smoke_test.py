@@ -99,7 +99,11 @@ def _query_settings(container, names: list[str]) -> list[tuple[str, str, str]]:
     return rows
 
 
-def run_smoke_test(tag: str, requested: dict[str, float | str]) -> SmokeResult:
+def run_smoke_test(
+    tag: str,
+    requested: dict[str, float | str],
+    initdb_expectations: dict[str, str] | None = None,
+) -> SmokeResult:
     """Boot `tag`, compare its live settings to `requested`, tear it down."""
     log: list[str] = []
     try:
@@ -136,14 +140,30 @@ def run_smoke_test(tag: str, requested: dict[str, float | str]) -> SmokeResult:
                 log=log,
             )
 
+        initdb_expectations = initdb_expectations or {}
         names = [spec.key for spec in parameters.PARAMETER_SPECS]
-        rows = _query_settings(container, names + ["listen_addresses"])
+        rows = _query_settings(
+            container,
+            names + ["listen_addresses"] + list(initdb_expectations),
+        )
 
         listen_addresses = next(
             (setting for name, setting, _ in rows if name == "listen_addresses"), None
         )
         listen_ok = listen_addresses == EXPECTED_LISTEN_ADDRESSES
         log.append(f"listen_addresses = {listen_addresses!r}")
+
+        # initdb settings are fixed when the data directory is created and
+        # can never be changed afterwards, so this is the only moment a
+        # mismatch can still be caught.
+        by_name = {name: setting for name, setting, _ in rows}
+        initdb_wrong = {
+            name: (expected, by_name.get(name))
+            for name, expected in initdb_expectations.items()
+            if by_name.get(name) != expected
+        }
+        for name, (expected, actual) in initdb_wrong.items():
+            log.append(f"{name} = {actual!r} (expected {expected!r})")
 
         comparisons = applied_settings.compare(
             parameters.PARAMETER_SPECS, requested, rows
@@ -158,6 +178,20 @@ def run_smoke_test(tag: str, requested: dict[str, float | str]) -> SmokeResult:
                     f"{listen_addresses!r} — it only accepts connections from "
                     "inside its own container, so a published port and any "
                     "companion service will both fail to connect."
+                ),
+                log=log,
+                comparisons=comparisons,
+            )
+
+        if initdb_wrong:
+            return SmokeResult(
+                status=FAILED,
+                summary=(
+                    "The server started, but "
+                    + ", ".join(sorted(initdb_wrong))
+                    + " did not come out as requested. These are set when the "
+                    "data directory is created and cannot be changed on a "
+                    "cluster that already exists."
                 ),
                 log=log,
                 comparisons=comparisons,

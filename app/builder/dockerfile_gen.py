@@ -22,10 +22,16 @@ _INIT_SQL_COPY = "COPY init-extensions.sql /docker-entrypoint-initdb.d/10-extens
 
 _PGBACKREST_CONF_COPY = "COPY pgbackrest.conf /etc/pgbackrest/pgbackrest.conf\n"
 
+# POSTGRES_INITDB_ARGS is read by the official entrypoint when it creates
+# the data directory. These settings are context=internal — fixed at that
+# moment and unchangeable afterwards — so unlike postgresql.conf they have
+# to be decided before the image ever runs.
+_INITDB_ARGS_ENV = 'ENV POSTGRES_INITDB_ARGS="{args}"\n'
+
 _DOCKERFILE_TEMPLATE = """\
 FROM postgres:{tag}
 
-{apt_layer}COPY postgresql.conf /etc/postgresql/postgresql.conf
+{apt_layer}{initdb_args_env}COPY postgresql.conf /etc/postgresql/postgresql.conf
 {init_sql_copy}{pgbackrest_conf_copy}
 CMD ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
 """
@@ -38,6 +44,7 @@ def create_build_context(
     build_id: str | None = None,
     extra_apt_packages: list[str] | None = None,
     pgbackrest_conf: str | None = None,
+    initdb_args: str | None = None,
 ) -> Path:
     extensions = extensions or []
     extra_apt_packages = extra_apt_packages or []
@@ -50,6 +57,9 @@ def create_build_context(
     apt_layer = _APT_LAYER_TEMPLATE.format(packages=" ".join(packages)) if packages else ""
     init_sql_copy = _INIT_SQL_COPY if extensions else ""
     pgbackrest_conf_copy = _PGBACKREST_CONF_COPY if pgbackrest_conf else ""
+    initdb_args_env = (
+        _INITDB_ARGS_ENV.format(args=initdb_args) if initdb_args else ""
+    )
 
     (context_dir / "Dockerfile").write_text(
         _DOCKERFILE_TEMPLATE.format(
@@ -57,6 +67,7 @@ def create_build_context(
             apt_layer=apt_layer,
             init_sql_copy=init_sql_copy,
             pgbackrest_conf_copy=pgbackrest_conf_copy,
+            initdb_args_env=initdb_args_env,
         )
     )
     (context_dir / "postgresql.conf").write_text(conf_text)

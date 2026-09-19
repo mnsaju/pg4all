@@ -18,8 +18,8 @@ from app.builder.dockerfile_gen import BUILD_OUTPUT_DIR, create_build_context
 from app.builder.docker_build import build_image, remove_build_image, remove_image, tag_image
 from app.builder.smoke_test import run_smoke_test
 from app.core import (
-    auth, credentials, extensions, hardware, image_tags, monitoring, parameters, pg_versions,
-    ports, services, sizing, validation, workloads,
+    auth, credentials, extensions, hardware, image_tags, initdb, monitoring, parameters,
+    pg_versions, ports, services, sizing, validation, workloads,
 )
 from app.core.conf_generator import render_conf
 
@@ -274,6 +274,20 @@ def _generate_conf(form, version, values: dict[str, float | str]) -> dict:
 
     return {
         "conf_text": render_conf(settings),
+        "initdb_args": initdb.render_args(
+            version.major,
+            checksums=form.get("initdb_checksums") != "0",
+            wal_segment_mb=initdb.resolve_wal_segment_mb(
+                form.get("initdb_wal_segment_mb")
+            ),
+            collation=initdb.resolve_collation(form.get("initdb_collation")),
+        ),
+        "initdb_expectations": initdb.expected_settings(
+            checksums=form.get("initdb_checksums") != "0",
+            wal_segment_mb=initdb.resolve_wal_segment_mb(
+                form.get("initdb_wal_segment_mb")
+            ),
+        ),
         "conf_values": conf_values,
         "extensions": selected_extensions,
         "services": selected_services,
@@ -364,6 +378,12 @@ def index(
             "selected_extension_keys": default_extension_keys,
             "services": services.list_services(),
             "selected_service_keys": default_service_keys,
+            "initdb_wal_choices": initdb.WAL_SEGMENT_CHOICES,
+            "initdb_defaults": {
+                "wal_segment_mb": initdb.DEFAULT_WAL_SEGMENT_MB,
+                "collation": initdb.COLLATION_IMAGE_DEFAULT,
+            },
+            "checksums_default_on_from": initdb.CHECKSUMS_DEFAULT_ON_FROM_MAJOR,
             "port_specs": ports.PORT_SPECS,
             "host_ports": ports.defaults(),
             "findings": _all_findings(
@@ -487,6 +507,8 @@ async def build(request: Request, background_tasks: BackgroundTasks):
     selected_services = generated["services"]
     service_apt_packages = generated["apt_packages"]
     pgbackrest_conf = generated["pgbackrest_conf"]
+    initdb_args = generated["initdb_args"]
+    initdb_expectations = generated["initdb_expectations"]
     build_id = uuid.uuid4().hex
     context_dir = create_build_context(
         version.major,
@@ -495,6 +517,7 @@ async def build(request: Request, background_tasks: BackgroundTasks):
         build_id=build_id,
         extra_apt_packages=service_apt_packages,
         pgbackrest_conf=pgbackrest_conf,
+        initdb_args=initdb_args,
     )
     # The build owns this tag permanently; the short series tag is moved
     # onto it after a successful build. Everything generated for this build
@@ -538,6 +561,7 @@ async def build(request: Request, background_tasks: BackgroundTasks):
         pg_major=version.major,
         series_tag=series,
         conf_values=conf_values,
+        initdb_expectations=initdb_expectations,
         selected_services=selected_services,
         username=record.username,
         password=password,
@@ -554,6 +578,7 @@ def _run_build(
     pg_major: str,
     series_tag: str,
     conf_values: dict,
+    initdb_expectations: dict,
     selected_services: list,
     username: str,
     password: str,
@@ -599,7 +624,7 @@ def _run_build(
 
         build_store.set_stage(context_dir, build_store.STAGE_SMOKE_TESTING)
         build_store.append_log(context_dir, ["", "--- smoke test ---"])
-        smoke = run_smoke_test(tag, conf_values)
+        smoke = run_smoke_test(tag, conf_values, initdb_expectations)
         build_store.append_log(context_dir, smoke.log)
 
         # The image built, so the build succeeded. A failed smoke test is

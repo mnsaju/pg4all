@@ -85,6 +85,29 @@ with the resulting `postgresql.conf` baked in.
   asserts the two are byte-identical). This also makes the tuner useful on
   its own: most people run PostgreSQL from a package on a machine they
   already have, and want the conf rather than the image.
+- Choose the options `initdb` fixes when the cluster is first created
+  (`app/core/initdb.py`). These are `context=internal`: unlike everything
+  in the tuner they cannot be corrected by editing a conf and restarting,
+  so getting one wrong is a dump and reload. Data page checksums default
+  to **on**, because PostgreSQL leaves them off through 17 and turns them
+  on from 18 — so without this a pg4all 16 or 17 image had no corruption
+  detection while an 18 one did, and nothing said so. WAL segment size and
+  collation are also offered. Two version traps are handled here rather
+  than left to whoever writes the flags: `--no-data-checksums` only exists
+  from 18, so turning them off below that means emitting nothing; and
+  `--locale=C` on its own silently resolves the encoding to `SQL_ASCII`,
+  disabling encoding validation entirely, so C collation is always paired
+  with an explicit `--encoding=UTF8`. The smoke test is told what to expect
+  and checks it, since this is the only moment a mistake is still catchable.
+
+  Page size is the one thing genuinely out of reach: `block_size` is
+  compile-time (`./configure --with-blocksize`), so changing it would mean
+  building PostgreSQL from source and giving up the official images,
+  binary compatibility with standard tooling, and `pg_upgrade` between
+  differently-built clusters — for gains that benchmark as marginal outside
+  narrow analytics cases. Huge pages, transparent huge pages, filesystem
+  and I/O scheduler all sit below the container and are the host's business,
+  not pg4all's.
 - Build the resulting Docker image on demand, with your final values. The
   build runs in the background and streams to a page you can watch
   (`app/builder/build_store.py`): submitting returns straight away with a
