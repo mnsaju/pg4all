@@ -972,3 +972,35 @@ def test_a_custom_machine_reads_sensibly_in_the_image_tag(client):
     build_id = _BUILD_ID_RE.search(resp.text).group(1)
     record = credential_store.load_credential(build_id)
     assert record.image_tag == f"pg4all/postgres:17-oltp-12c48g-{build_id[:8]}"
+
+
+# --- sizing ------------------------------------------------------------
+
+def test_asking_for_a_machine_applies_one_and_shows_its_reasoning(client):
+    resp = client.get("/?workload=oltp&data_gb=500&concurrent_queries=20")
+    assert resp.status_code == 200
+    assert "Suggested:" in resp.text
+    assert "starting point" in resp.text
+    # 20% of 500 GB = 100 GB hot -> next real size up is 128 GB.
+    assert 'name="tier" value="32c128g"' in resp.text
+    # The sliders must already reflect it, not the previous machine.
+    assert "shared_buffers = 32768MB" in resp.text      # 128 GB / 4
+
+
+def test_the_suggestion_shows_its_working_rather_than_just_a_number(client):
+    resp = client.get("/?workload=oltp&data_gb=500&concurrent_queries=20")
+    assert "hot data" in resp.text
+    assert "cache hit ratio" in resp.text
+    assert "PGTune" in resp.text  # it distinguishes itself from the derived part
+
+
+def test_a_suggestion_can_be_overridden_by_entering_a_machine(client):
+    resp = client.get("/?workload=oltp&vcpu=4&ram_gb=16&storage=ssd")
+    assert 'name="tier" value="4c16g"' in resp.text
+    assert "Suggested:" not in resp.text
+
+
+def test_sizing_nonsense_does_not_break_the_page(client):
+    for query in ("data_gb=abc&concurrent_queries=5", "data_gb=-1&concurrent_queries=0"):
+        resp = client.get(f"/?workload=oltp&{query}")
+        assert resp.status_code == 200, query

@@ -61,6 +61,48 @@
   <button type="submit" class="btn btn-secondary">Use this</button>
 </form>
 
+<form method="get" action="/" class="hardware-form">
+  <input type="hidden" name="pg_version" value="{{ selected_version.major }}">
+  <input type="hidden" name="workload" value="{{ selected_workload.key }}">
+  <span class="pill-row-label">Or size one for me</span>
+  <label class="port-field">
+    <input type="number" class="port-input port-input-narrow" name="data_gb"
+           min="0" max="1000000" step="1" placeholder="500"
+           value="{{ sizing_inputs.data_gb }}" required>
+    <span class="port-suffix">GB of data</span>
+  </label>
+  <label class="port-field">
+    <input type="number" class="port-input port-input-narrow" name="concurrent_queries"
+           min="1" max="10000" step="1" placeholder="20"
+           value="{{ sizing_inputs.concurrent_queries }}" required>
+    <span class="port-suffix">concurrent queries</span>
+  </label>
+  <button type="submit" class="btn btn-secondary">Suggest a machine</button>
+</form>
+
+{% if recommendation %}
+<div class="param-card sizing-result">
+  <div class="param-info" style="flex: 1 1 100%;">
+    <div class="param-name-row">
+      <span class="param-name">
+        Suggested: {{ recommendation.vcpu }} vCPU / {{ recommendation.ram_gb }} GB
+        / {{ recommendation.storage|upper }}
+      </span>
+      <span class="badge badge-risk-medium">starting point</span>
+    </div>
+    <p class="param-desc">
+      Applied to the sliders below. Unlike the tuning formulas, which are
+      PGTune's published algorithm, this is a chain of conventions — so each
+      step is shown separately and any of them can be overridden by entering
+      a machine directly above.
+    </p>
+    <ul class="sizing-notes">
+      {% for note in recommendation.notes %}<li>{{ note }}</li>{% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+
 <form id="tuner-form" method="post" action="/build">
   <input type="hidden" name="pg_version" value="{{ selected_version.major }}">
   <input type="hidden" name="workload" value="{{ selected_workload.key }}">

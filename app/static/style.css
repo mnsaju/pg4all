@@ -715,3 +715,15 @@ code {
 }
 
 .port-input-narrow { width: 5.5rem; }
+
+.sizing-result { margin-bottom: 1.5rem; border-left: 3px solid var(--accent); }
+
+.sizing-notes {
+  margin: 0.75rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.sizing-notes li { margin-bottom: 0.35rem; }

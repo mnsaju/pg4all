@@ -12,6 +12,17 @@ with the resulting `postgresql.conf` baked in.
   variant yet, no from-source build).
 - Pick from the latest 3 supported PostgreSQL majors (`app/core/pg_versions.py`
   — hardcoded, update by hand when a new major/minor ships).
+- Or say how much data you have and how many queries run at once, and get
+  a machine suggested (`app/core/sizing.py`). This is the one part of
+  pg4all that cannot point at a derivation: PGTune's formulas take RAM and
+  CPU, so nothing in them takes data volume, and the step from "500 GB" to
+  "128 GB of RAM" runs through an estimate of how much data is actually hot
+  that no tool can know from outside. So it shows its working — one line
+  per number, each arguable on its own — and points at the measurement that
+  would disprove it, which is the cache hit ratio panel on the dashboard it
+  also generates. Write throughput is deliberately not modelled: it would
+  inform `max_wal_size` and autovacuum, but that would stack a second guess
+  on the first, and the checkpoint panel is the honest way to find out.
 - Pick a workload profile (web / OLTP / data warehouse / mixed / desktop —
   PGTune's own categories) and the machine: three presets, or the vCPU,
   RAM and storage type you actually have. The presets were never a

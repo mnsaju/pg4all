@@ -19,7 +19,7 @@ from app.builder.docker_build import build_image, remove_build_image, remove_ima
 from app.builder.smoke_test import run_smoke_test
 from app.core import (
     auth, credentials, extensions, hardware, image_tags, monitoring, parameters, pg_versions,
-    ports, services, validation, workloads,
+    ports, services, sizing, validation, workloads,
 )
 from app.core.conf_generator import render_conf
 
@@ -309,10 +309,28 @@ def index(
     vcpu: str | None = None,
     ram_gb: str | None = None,
     storage: str | None = None,
+    data_gb: str | None = None,
+    concurrent_queries: str | None = None,
 ):
     version, wl, hw_tier = _resolve_selection(
         pg_version, workload, tier, vcpu, ram_gb, storage
     )
+
+    # A sizing request replaces the machine with a suggested one, and shows
+    # its reasoning so each step can be argued with individually.
+    recommendation = None
+    if data_gb:
+        try:
+            recommendation = sizing.recommend(
+                float(data_gb), int(concurrent_queries or 1), wl.key
+            )
+            hw_tier = hardware.custom(
+                recommendation.vcpu, recommendation.ram_gb, recommendation.storage
+            )
+        except (TypeError, ValueError):
+            recommendation = None
+        else:
+            groups = parameters.build_tuner_groups(wl, hw_tier)
     groups = parameters.build_tuner_groups(wl, hw_tier)
     default_extension_keys = {
         e.key for e in extensions.list_extensions() if e.default_selected
@@ -335,6 +353,11 @@ def index(
             "selected_workload": wl,
             "selected_tier": hw_tier,
             "tier_is_custom": hardware.is_custom(hw_tier),
+            "recommendation": recommendation,
+            "sizing_inputs": {
+                "data_gb": data_gb or "",
+                "concurrent_queries": concurrent_queries or "",
+            },
             "groups": groups,
             "stats": _tuner_stats(groups),
             "extensions": extensions.list_extensions(),
