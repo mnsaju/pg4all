@@ -116,6 +116,11 @@ def apt_packages(selected: list[ServiceSpec]) -> list[str]:
 
 
 def render_pgbackrest_conf(pg_major: str) -> str:
+    # pg1-port stays 5432 whatever host port the build publishes. pgBackRest
+    # runs inside the Postgres container and connects over its loopback, so
+    # this is the container-internal port — the one thing app/core/ports.py
+    # never changes. Pointing it at the configured host port would break
+    # backups on every build that moved the published port.
     return (
         "[global]\n"
         "repo1-path=/var/lib/pgbackrest\n"
