@@ -281,6 +281,26 @@ orthogonal to what the console does internally.
   every route requires a session (see below), so a shell user on the host
   or another container that can reach the port still gets nothing.
 
+### Why FastAPI, not a higher-throughput framework (Robyn, …)
+
+Performance-oriented frameworks such as Robyn — a Python framework with a
+Rust runtime, built for request throughput — were considered and don't fit,
+because pg4all has no throughput problem to solve. This is a
+single-operator console bound to loopback: requests are rare and cheap, and
+the actual work of a build — `docker build`, then the smoke test — takes
+minutes on the Docker daemon, entirely outside the web layer. A faster HTTP
+core makes none of that faster.
+
+What the framework is actually leaned on for is the opposite of raw speed:
+Jinja2 server rendering, `BackgroundTasks` to run a build off the request,
+the one auth middleware that protects every route by existing, and
+Starlette's `TestClient`, which the whole `tests/test_main.py` suite is
+built on. Swapping frameworks would rewrite the web layer and that test
+harness — where this project's real bugs have been caught — for no
+functional gain, and trade a mature stack for a younger one. So the choice
+stands: FastAPI, and the bottleneck stays the Docker build, which no web
+framework changes.
+
 ## Run locally (no Docker)
 
 ```bash
