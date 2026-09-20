@@ -201,6 +201,35 @@ the ciphertext (`credentials/`) — this protects against casual exposure
 (backups, accidental commits, screenshots), not a full compromise of the
 host the console runs on. Both directories are gitignored.
 
+### Why not a secrets vault (OpenBao, gopass, …)
+
+A dedicated secrets backend was considered and isn't used, and — as with
+the login (see "Signing in") — this holds against the eventual Pigsty-like
+goal too. A vault's real value is separating the secret store from the
+thing that reads it across a trust boundary, plus audit, rotation, and
+dynamic short-lived credentials. None of that helps a single operator on a
+single host: the console must decrypt non-interactively to serve a
+password, so whatever unlocks the store lives on the same host as the app,
+and a host compromise loses everything regardless. Pigsty itself reflects
+this — it encrypts its config secrets with `ansible-vault` rather than
+running a runtime vault. The smallest real improvement short of one is to
+stop keeping `master.key` next to the ciphertext and inject it out-of-band
+(a Docker/Compose or systemd secret). A runtime vault earns its place only
+at the multi-node / audit / rotation boundary; there, prefer **OpenBao**
+(MPL-2.0) over HashiCorp Vault, which is now BUSL-licensed, not OSI open
+source.
+
+**gopass** specifically was evaluated and is not a fit for the in-app
+credential store. It is a CLI tool with no API or daemon, so the console
+would have to subprocess it and bundle GPG/age plus an agent; and because
+that GPG/age key still sits on the console host, it does **not** move the
+trust boundary the way a vault would — it lands in the same niche as the
+current Fernet store, with more moving parts and no dynamic credentials,
+policies, or programmatic-access audit. Its genuine strength (MIT-licensed,
+serverless, git-synced, multi-recipient GPG sharing) is as an out-of-band
+store for *humans* to share secrets among several operators, which is
+orthogonal to what the console does internally.
+
 ## Architecture
 
 - FastAPI + Jinja2, server-rendered HTML, one small vanilla-JS file
@@ -320,6 +349,32 @@ would stop the cookie being sent at all.
 There is one operator and no user system — no accounts, no roles, no
 registration, no reset flow. A single-operator tool doesn't need a user
 table; it needs unauthenticated requests to get nothing.
+
+### Why not an auth backend (PocketBase, Keycloak, …)
+
+A dedicated identity backend such as PocketBase was considered and is not
+used, and this holds even against the eventual goal of a Pigsty-like
+tool. Pigsty is operator-run infrastructure automation, not a
+multi-tenant hosted product: one admin runs it against nodes they own.
+Its access control is component-level — each thing it stands up brings
+its own login (Grafana users, Patroni/pgBouncer/Prometheus, PostgreSQL
+roles and `pg_hba.conf`) — with a reverse proxy in front, not a central
+service holding a user table. pg4all is already on that path: the
+monitoring stack it generates ships Grafana with its own auth. So growing
+toward Pigsty-like accumulates per-component auth rather than pulling
+everything into one backend.
+
+The point where the current scrypt-plus-cookie login is outgrown is not
+"add a user store" but "put one identity in front of many components" —
+which is an OIDC/SSO reverse proxy (oauth2-proxy, Authelia, Keycloak) in
+front of the console and Grafana alike, not a backend-as-a-service. A BaaS
+like PocketBase would only be in scope if pg4all left the Pigsty model
+entirely for a multi-tenant SaaS where strangers sign up and each tenant
+sees only their own clusters — the separate `pg-custom` control-plane
+vision this project is deliberately kept apart from. Even there PocketBase
+is a weak fit: almost none of its realtime-SQLite/file-storage surface
+would be used, and identity would still want to live as OIDC plus RBAC in
+the control plane's own database.
 
 ## Tests
 
