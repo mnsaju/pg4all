@@ -19,8 +19,11 @@ from fastapi.testclient import TestClient
 from dataclasses import replace
 
 import app.main as main_module
-from app.builder import auth_store, build_store, credential_store, dockerfile_gen, smoke_test
+from app.builder import (
+    auth_store, build_store, credential_store, dockerfile_gen, license_scan, smoke_test,
+)
 from app.builder.docker_build import BuildResult
+from app.builder.license_scan import LicenseResult
 from app.builder.smoke_test import SmokeResult
 from app.core import auth
 
@@ -80,6 +83,20 @@ def anonymous_client(tmp_path, monkeypatch):
             summary="PostgreSQL started and all tuned settings took effect.",
             log=["Started test container."],
         ),
+    )
+
+    # Generating notices scans the built image with syft in a container —
+    # the same real-daemon dependency build_image and run_smoke_test have,
+    # so it's stubbed here too. It still writes a real file, so the build
+    # page's notices link is exercised. tests/test_license_scan.py covers
+    # the scan itself, and the real syft path behind the docker marker.
+    def _fake_generate_notices(build_dir, image_tag, pg_major, selected_services):
+        path = build_dir / license_scan.NOTICES_FILENAME
+        path.write_text("# Third-party licenses\n\n(test stub)\n")
+        return LicenseResult(notices_path=path, summary="Wrote notices (test stub).")
+
+    monkeypatch.setattr(
+        main_module.license_scan, "generate_notices", _fake_generate_notices
     )
     return TestClient(main_module.app)
 
@@ -241,6 +258,24 @@ def test_result_page_shows_the_smoke_test_outcome(client):
     resp = _submit_build(client)
     assert resp.status_code == 200
     assert "Smoke test passed" in resp.text
+
+
+def test_build_page_links_notices_and_the_route_serves_them(client):
+    resp = _submit_build(client)
+    assert resp.status_code == 200
+    build_id = _BUILD_ID_RE.search(resp.text).group(1)
+
+    assert f"/builds/{build_id}/THIRD_PARTY_NOTICES.md" in resp.text
+
+    notices = client.get(f"/builds/{build_id}/THIRD_PARTY_NOTICES.md")
+    assert notices.status_code == 200
+    assert "Third-party licenses" in notices.text
+    assert "attachment" in notices.headers["content-disposition"]
+
+
+def test_notices_route_is_404_for_unknown_build(client):
+    resp = client.get(f"/builds/{'0' * 32}/THIRD_PARTY_NOTICES.md")
+    assert resp.status_code == 404
 
 
 def test_a_failing_smoke_test_does_not_invalidate_the_build(client, monkeypatch):

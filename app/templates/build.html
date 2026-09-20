@@ -9,6 +9,9 @@
 <div class="action-bar">
   <a href="/" class="btn-link">&larr; back to Config Tuner</a>
   <a href="/builds/{{ build.build_id }}/postgresql.conf" class="btn-link">download postgresql.conf</a>
+  {% if has_notices %}
+  <a href="/builds/{{ build.build_id }}/THIRD_PARTY_NOTICES.md" class="btn-link">download third-party licenses</a>
+  {% endif %}
   {% if build.is_terminal %}
   <form method="post" action="/builds/{{ build.build_id }}/delete" class="inline-form">
     <button type="submit" class="btn-link btn-link-danger">delete this build</button>

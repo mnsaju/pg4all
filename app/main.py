@@ -11,7 +11,8 @@ from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
 from app.builder import (
-    auth_store, build_store, compose_gen, credential_store, monitoring_gen, port_store,
+    auth_store, build_store, compose_gen, credential_store, license_scan,
+    monitoring_gen, port_store,
 )
 from app.builder.host_ports import published_host_ports
 from app.builder.dockerfile_gen import BUILD_OUTPUT_DIR, create_build_context
@@ -187,6 +188,7 @@ def _build_dir_flags(build_dir: Path) -> dict:
         "has_pgbackrest": (build_dir / "pgbackrest.conf").exists(),
         "has_pgadmin": "pgadmin:" in compose_text,
         "has_grafana": "grafana:" in compose_text,
+        "has_notices": (build_dir / license_scan.NOTICES_FILENAME).exists(),
         "pgadmin_email": services.PGADMIN_EMAIL,
         "grafana_user": services.GRAFANA_ADMIN_USER,
         "host_ports": port_store.read_ports(build_dir),
@@ -466,6 +468,27 @@ def download_build_conf(build_id: str):
     )
 
 
+@app.get("/builds/{build_id}/THIRD_PARTY_NOTICES.md", response_class=PlainTextResponse)
+def download_build_notices(build_id: str):
+    """The third-party license manifest a particular build produced."""
+    try:
+        build_dir = build_store.build_dir_for(BUILD_OUTPUT_DIR, build_id)
+    except ValueError:
+        return PlainTextResponse("Not found", status_code=404)
+
+    path = build_dir / license_scan.NOTICES_FILENAME
+    if not path.is_file():
+        return PlainTextResponse("Not found", status_code=404)
+
+    return PlainTextResponse(
+        path.read_text(),
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="THIRD_PARTY_NOTICES-{build_id[:8]}.md"'
+        },
+    )
+
+
 @app.post("/build", response_class=HTMLResponse)
 async def build(request: Request, background_tasks: BackgroundTasks):
     form = await request.form()
@@ -621,6 +644,21 @@ def _run_build(
         # of this belongs in the image.
         if monitoring.is_selected(s.key for s in selected_services):
             monitoring_gen.write_monitoring_files(context_dir, conf_values, pg_major)
+
+        # The image now exists on the daemon, so it can be scanned for the
+        # licenses of everything it bundles. Never fatal: the notices file
+        # documents its own gaps, and a build that produced a runnable image
+        # shouldn't be marked failed because a manifest couldn't be written.
+        try:
+            result = license_scan.generate_notices(
+                context_dir, tag, pg_major, selected_services
+            )
+            build_store.append_log(context_dir, f"[pg4all] {result.summary}")
+        except Exception as exc:  # noqa: BLE001 - a notices failure never fails a build
+            build_store.append_log(
+                context_dir,
+                f"[pg4all] Could not write third-party license notices: {exc!r}",
+            )
 
         build_store.set_stage(context_dir, build_store.STAGE_SMOKE_TESTING)
         build_store.append_log(context_dir, ["", "--- smoke test ---"])

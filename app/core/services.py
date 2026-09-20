@@ -44,6 +44,15 @@ class ServiceSpec:
     apt_package: str | None  # only set when mode == "apt"
     risk: str  # "low" | "medium" — same vocabulary as extensions.py
     default_selected: bool
+    # SPDX id of the referenced image's primary project, for the
+    # THIRD_PARTY_NOTICES manifest (app/core/licensing.py). Only meaningful
+    # for mode == "sidecar" images the compose file pulls whole; an "apt"
+    # service is baked into the Postgres image and its license is picked up
+    # by scanning that image instead. Hand-maintained alongside the pinned
+    # `image` tag above it, so bumping the pin puts the license right there
+    # to reconsider — and it is the *primary* project license only; each
+    # image bundles base-layer components under their own licenses too.
+    license: str = ""
     # Services this one cannot work without. Grafana can't scrape, so it
     # needs Prometheus, which needs something to scrape — ticking one box
     # brings the whole chain rather than silently producing a dashboard
@@ -63,7 +72,7 @@ SERVICES: list[ServiceSpec] = [
         "at the built Postgres "
         "instance with the same superuser credential.",
         mode="sidecar", image="edoburu/pgbouncer:v1.25.2-p0", apt_package=None,
-        risk="low", default_selected=False,
+        risk="low", default_selected=False, license="ISC",
     ),
     ServiceSpec(
         "pgbackrest", "pgBackRest",
@@ -83,7 +92,7 @@ SERVICES: list[ServiceSpec] = [
         "to the built Postgres "
         "instance with the same superuser credential.",
         mode="sidecar", image="quay.io/prometheuscommunity/postgres-exporter:v0.20.1",
-        apt_package=None, risk="low", default_selected=False,
+        apt_package=None, risk="low", default_selected=False, license="Apache-2.0",
     ),
     ServiceSpec(
         "prometheus", "Prometheus",
@@ -94,7 +103,7 @@ SERVICES: list[ServiceSpec] = [
         "loopback bind is the only thing protecting it. Retains 15 days or "
         "2 GB, whichever comes first.",
         mode="sidecar", image="prom/prometheus:v3.14.0", apt_package=None,
-        risk="low", default_selected=False,
+        risk="low", default_selected=False, license="Apache-2.0",
         requires=("postgres_exporter",),
         named_volumes=("prometheus_data",),
     ),
@@ -108,7 +117,7 @@ SERVICES: list[ServiceSpec] = [
         "127.0.0.1 only, like pgAdmin; reach it over an SSH tunnel. Logs in "
         "as admin with this build's superuser password.",
         mode="sidecar", image="grafana/grafana:13.2.2", apt_package=None,
-        risk="medium", default_selected=False,
+        risk="medium", default_selected=False, license="AGPL-3.0-only",
         requires=("postgres_exporter", "prometheus"),
         named_volumes=("grafana_data",),
     ),
@@ -125,7 +134,7 @@ SERVICES: list[ServiceSpec] = [
         "Postgres connection yourself the first time you open it — pg4all "
         "doesn't pre-seed it.",
         mode="sidecar", image="dpage/pgadmin4:9.18.0", apt_package=None,
-        risk="medium", default_selected=False,
+        risk="medium", default_selected=False, license="PostgreSQL",
     ),
 ]
 

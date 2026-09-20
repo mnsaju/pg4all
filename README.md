@@ -379,6 +379,45 @@ metric actually moved, directionally rather than to exact numbers —
 throughput on a shared machine is not reproducible, and a test asserting
 "2000 tps" fails for reasons that have nothing to do with pg4all.
 
+## Third-party license notices
+
+pg4all's deliverable bundles a lot of open-source software — the Debian
+base and PostgreSQL inside the image it builds, plus the companion images
+the generated compose file pulls (Grafana, Prometheus, the exporter, …).
+Distributing that bundle carries every component's own license
+obligations, so each successful build writes a `THIRD_PARTY_NOTICES.md`
+into `build_output/<build_id>/`, downloadable from the build page.
+
+There is no single "superset" license to generate: the components are an
+aggregation of independently licensed programs, and the copyleft ones —
+GPL, LGPL, and Grafana's AGPL — keep their own terms and cannot be
+relicensed under a pg4all umbrella. So the file is an *inventory*, not a
+license. It lists each component and its SPDX license, groups them by the
+strength of the obligation (network/strong/weak copyleft, then
+permissive), and declares the license of pg4all's own generated
+Dockerfile/conf (`OUTPUT_LICENSE_DECLARATION` in `app/core/licensing.py`).
+
+The built image is scanned in place with syft, run as a throwaway
+container against the host daemon over the same socket the console already
+mounts — so no tool is added to the console image; the syft image is
+pulled on first use. The companion images are not scanned (that would mean
+pulling every one over the network at build time); each is identified by
+the primary project license recorded beside its pin in
+`app/core/services.py`. The verbatim per-package license texts already
+travel inside the image at `/usr/share/doc/*/copyright` (the Debian
+convention), so the manifest points there rather than duplicating tens of
+thousands of lines of license text.
+
+If the scan can't run, the file is still written — one that says the image
+scan was unavailable, rather than one that silently omits the image's
+components. Compliance information that looks complete but isn't is the
+failure worth avoiding.
+
+This is an inventory to help meet notice obligations, not legal advice.
+Two things warrant a human's confirmation before you rely on it: the
+license declared for pg4all's own generated files, and — if you ship the
+monitoring stack — that you are meeting Grafana's AGPL obligations.
+
 ## Deliberately deferred (not missing — scoped out for now)
 
 - Native OS packages (target families: Debian, RHEL) for non-container use.
@@ -390,6 +429,14 @@ throughput on a shared machine is not reproducible, and a test asserting
   throttle, and the console isn't reachable from the network; a lockout on
   a single-operator tool is mostly a way to lock out the operator.
 - Anything beyond small/medium/large hardware presets.
+- A machine-readable SBOM (SPDX/CycloneDX) alongside the license notices,
+  and in-console warnings when a build's bundle includes copyleft. The
+  notices file already records the licenses (see "Third-party license
+  notices"); emitting an SBOM and surfacing copyleft in the UI are the
+  next phases, deferred until asked for. So is extracting each package's
+  verbatim copyright text into the file rather than pointing at the copies
+  inside the image. A license *policy/selection* resolver is out of scope
+  entirely — that belongs to the separate pg-custom effort, not pg4all.
 - Patroni/HA clustering: it replaces how Postgres itself is started (a
   distributed consensus store, multi-node topology, dynamic config, leader
   election) rather than sitting beside a single static build, which is a
