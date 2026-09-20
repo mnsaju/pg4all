@@ -66,7 +66,8 @@ a mutating step without a verified backup and explicit human approval.
 
 1. **Image / upgrade compatibility.** Confirm source ≤ target and source ≥
    `pg_upgrade`'s floor (9.2); confirm both majors' binaries are present
-   (the dual-version requirement — needs a dual-version image, or the
+   (the dual-version requirement — needs a dual-version image such as
+   `tianon/docker-postgres-upgrade`, see "Existing tools" below, or the
    `pg_dump` path which needs only the new `pg_dump` + old server); then
    run `pg_upgrade --check` as the authoritative gate. `--check` needs the
    target cluster already `initdb`'d with matching settings, which is
@@ -120,6 +121,74 @@ a mutating step without a verified backup and explicit human approval.
 - It is a friendly pre-report; **`pg_upgrade --check` is the real
   authority, and a verified backup is the real safety net.**
 
+### Existing tools to build on (not reinvent)
+
+Researched 2026-09-20. Open-source prior art the helper should wrap or lean
+on rather than reimplement.
+
+- **`tianon/docker-postgres-upgrade`** — the canonical dual-version Docker
+  image for running `pg_upgrade` in a container, with tags in `OLD-to-NEW`
+  form (e.g. `17-to-18`). This is the dual-binary image the major path
+  needs; wrap it, or build pg4all's own dual-version image the same way,
+  rather than assembling one from scratch. (Upstream bills it as a PoC to
+  adapt, not a turnkey tool.)
+- **`pgautoupgrade`** (`pgautoupgrade/docker-pgautoupgrade`) — the closest
+  existing thing to single-container auto-upgrade, and an instructive
+  *anti-pattern* for our defaults. A drop-in for the official image that,
+  on startup, detects an older-major PGDATA and automatically runs
+  `pg_upgrade --link`, then **removes the old cluster data** on success. It
+  is fast and effortless, but `--link` mutates files in place and the old
+  data is deleted with no backup gate and no approval — the project itself
+  warns a prior backup is non-negotiable. This is exactly the aggression
+  pg4all's assisted, backup-gated, approval-required design avoids. Worth
+  offering at most as an explicit opt-in "fast/dev" mode, never the
+  default. It's also the reference for the *detect-old-PGDATA-on-startup*
+  mechanic.
+- **`pgcopydb`** — a mature C tool that clones a database and follows
+  changes (CDC) to migrate very large databases with almost-zero downtime.
+  The tool to lean on for the logical / near-zero-downtime major path,
+  instead of hand-rolling logical replication. **`pg_easy_replicate`** is a
+  lighter blue/green orchestrator with the same idea (sub-minute downtime)
+  but is Ruby, so treat it as a reference rather than a dependency.
+- **Debian `pg_upgradecluster`** (postgresql-common) is a useful reference
+  but does **not** fit pg4all: it expects Debian's `pg_createcluster`
+  layout, which the official `postgres` image lineage pg4all builds on does
+  not use.
+- **Pigsty** — the fuller project pg4all is a deliberately simpler
+  alternative to, so its documented upgrade procedures are the natural
+  model for our runbook: a rolling workflow for minor updates, and for
+  majors a logical-replication blue/green migration (schema-only restore,
+  matched extensions/collations, `wal_level=logical`, publication +
+  subscription, `REPLICA IDENTITY` handling for PK-less tables, row-count/
+  checksum verification) for the shortest, rollback-ready downtime, with
+  `pg_upgrade` also documented.
+- Kubernetes operators automate the same operations but are K8s-scoped — a
+  reference for the automated/multi-host direction (the Patroni /
+  `pg-custom` track), not usable in pg4all's compose model:
+  - **CloudNativePG** — declarative offline in-place `pg_upgrade` major
+    upgrades (v1.26+), minor by image bump.
+  - **Crunchy PGO** — `PGUpgrade` CRD; permanent (no rollback), and it
+    currently warns that **PostGIS upgrades are unsupported**.
+  - **Percona Operator** — major upgrades GA since 2.9 (Apr 2026); offline
+    (cluster stopped), one major at a time per current docs, and notably it
+    **duplicates the data rather than deleting the old** (needs free space)
+    — a safer stance than pgautoupgrade's auto-remove.
+  - **StackGres**, **Zalando/Spilo** — also support major upgrades.
+
+### PostgreSQL 18 image change (affects volume layout and `--link`)
+
+From PostgreSQL 18 the official image uses a **version-specific data
+directory** (`/var/lib/postgresql/18/data`, not the generic
+`/var/lib/postgresql/data`), specifically so that mounting
+`/var/lib/postgresql` lets `pg_upgrade --link` work across majors — making
+fast in-place upgrades far more viable in the container model. PG18 also
+**persists planner statistics across a major upgrade**, removing the
+post-upgrade `ANALYZE` performance dip. Two consequences: pg4all's volume
+layout for 18+ builds should expect the versioned path (and the current
+build's volume handling should be checked against it), and the assisted
+major helper can offer `--link` as a genuinely fast option, behind the
+extra opt-in `--link` already requires.
+
 ## Recommended scope
 
 | Path | Decision |
@@ -138,6 +207,12 @@ a mutating step without a verified backup and explicit human approval.
   version-compatibility comparison and post-upgrade `ALTER EXTENSION`.
 - Reuse the credential store and, if present, pgBackRest for the backup
   step.
+- Wrap `tianon/docker-postgres-upgrade` (or a pg4all dual-version image
+  built the same way) for the in-place `pg_upgrade` path, and `pgcopydb`
+  for the logical / near-zero-downtime path — rather than reimplementing
+  either (see "Existing tools to build on").
+- Account for PostgreSQL 18's version-specific data directory in the volume
+  layout, which also enables the fast `pg_upgrade --link` path.
 - Generate the helper scripts into `build_output/<build_id>/` alongside the
   other per-build artifacts, downloadable from the build page like the conf
   and the license notices.
